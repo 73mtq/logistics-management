@@ -4,7 +4,11 @@ Android 应用，使用 Kotlin、Jetpack Compose、Material 3、Room、Android K
 
 应用已在小米 15 安装并启动。已确认京东真实登录与 19 条订单导入，拼多多真实登录与两次返回 0 条订单的同步。测试已按用户要求停止，完整平台和外部服务验收尚未完成。具体结果见 [验收记录](docs/acceptance.md)，数据及同步实现见 [架构说明](docs/architecture.md)。
 
-源码保存在 [GitHub 私有仓库](https://github.com/73mtq/logistics-management)，调试 APK 和 SHA256 校验文件见 [开发预发布版本 v1.0.0-dev.20261006](https://github.com/73mtq/logistics-management/releases/tag/v1.0.0-dev.20261006)。
+源码保存在 [GitHub 仓库](https://github.com/73mtq/logistics-management)，调试 APK 和 SHA256 校验文件见 [开发预发布版本 v1.0.0-dev.20261006](https://github.com/73mtq/logistics-management/releases/tag/v1.0.0-dev.20261006)。
+
+## 理解项目
+
+[项目关系图与源码导航](docs/project-map.md) 包含启动过程、模块关系、同步过程、数据关系和账号移除流程，GitHub 可以直接显示其中的 Mermaid 图。[CodeGraph 使用说明](docs/codegraph.md) 提供 Kotlin 代码关系索引的建立、更新和查询命令；[AGENTS.md](AGENTS.md) 提供 AI 阅读入口与开发要求。
 
 ## 构建与安装
 

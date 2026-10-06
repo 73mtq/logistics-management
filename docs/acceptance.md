@@ -28,7 +28,7 @@
 | 大小 | 20,643,792 bytes |
 | 文件修改时间 | 2026-10-06 16:07:32，Asia/Shanghai |
 | SHA-256 | `A3327AF979ADF68261985E71240FE00B3C5D84B67004909B9B40B232961A76B5` |
-| 交付位置 | 私有仓库 `73mtq/logistics-management`，预发布版本 `v1.0.0-dev.20261006` |
+| 交付位置 | GitHub 仓库 `73mtq/logistics-management`，预发布版本 `v1.0.0-dev.20261006` |
 
 ## 真机页面与设备测试
 

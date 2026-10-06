@@ -4,6 +4,7 @@
 local.properties
 .work/
 .local-build-tools/
+.codegraph/
 *.jks
 *.keystore
 captures/
