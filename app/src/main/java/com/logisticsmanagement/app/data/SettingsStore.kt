@@ -10,22 +10,24 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class AppSettings(
-    val aiEnabled: Boolean = false,
-    val aiBaseUrl: String = "",
-    val aiModel: String = "",
-    val dailyReportEnabled: Boolean = false,
-    val dailyReportHour: Int = 20,
-    val dailyReportMinute: Int = 0,
-    val backgroundEnabled: Boolean = true,
+    val backgroundEnabled: Boolean = false,
+    val nativeJevEnabled: Boolean = false,
 )
 
 class SettingsStore(context: Context) {
     private val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    private val state = MutableStateFlow(preferences.getString("settings", null)?.let { Json.decodeFromString<AppSettings>(it) } ?: AppSettings())
+    private val state = MutableStateFlow(readSettings())
+    private fun readSettings(): AppSettings {
+        if (preferences.getInt("version", 1) < 2) {
+            val settings = AppSettings()
+            check(preferences.edit().putString("settings", Json.encodeToString(settings)).putInt("version", 2).commit())
+            return settings
+        }
+        return preferences.getString("settings", null)?.let { Json.decodeFromString<AppSettings>(it) } ?: AppSettings()
+    }
     fun observe(): Flow<AppSettings> = state.asStateFlow()
     suspend fun get(): AppSettings = state.value
     suspend fun save(settings: AppSettings) {
-        require(settings.dailyReportHour in 0..23 && settings.dailyReportMinute in 0..59)
         check(preferences.edit().putString("settings", Json.encodeToString(settings)).commit())
         state.value = settings
     }

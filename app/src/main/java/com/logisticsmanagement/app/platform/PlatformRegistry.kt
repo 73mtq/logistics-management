@@ -34,10 +34,18 @@ class PlatformRegistry(
     internal val profiles = AccountProfiles(this.context)
     private val credentialLocks = ConcurrentHashMap<String, Mutex>()
     private val adapters: Map<Platform, PlatformAdapter> by lazy {
-        listOf(XiaomiAdapter(this), TaobaoAdapter(this), JdAdapter(this), PddAdapter(this), DouyinAdapter(this)).associateBy { it.platform }
+        listOf(TaobaoAdapter(this), JdAdapter(this), PddAdapter(this), DouyinAdapter(this)).associateBy { it.platform }
     }
 
     fun prepareProfiles() = profiles.prepare()
+    suspend fun cleanupRemovedProfiles() {
+        for (pending in repository.pendingProfileCleanup()) {
+            profiles.deleteProfile(pending.profileName)
+            credentials.deleteAccount(pending.accountId)
+            repository.finishProfileCleanup(pending.accountId)
+        }
+        credentials.deleteServiceSecrets()
+    }
     fun adapter(platform: Platform): PlatformAdapter = adapters[platform]
         ?: throw AppFailure("此来源没有平台账号", FailureKind.CONFIGURATION)
 
@@ -66,35 +74,42 @@ class PlatformRegistry(
     fun openLogin(context: Context, account: Account) {
         val intent = Intent(context, PlatformBrowserActivity::class.java)
             .putExtra("accountId", account.id).putExtra("mode", "login")
-            .putExtra("returnToXiaomiConfiguration", account.platform == Platform.XIAOMI && context !is XiaomiAccountActivity)
         if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
 
     fun openSource(context: Context, account: Account, source: SourceRef) {
-        val intent = Intent(context, PlatformBrowserActivity::class.java)
+        context.startActivity(sourceIntent(context, account, source))
+    }
+
+    internal fun sourceIntent(context: Context, account: Account, source: SourceRef): Intent {
+        require(source.accountId == account.id && source.platform == account.platform)
+        val intent = if (account.platform == Platform.DOUYIN && account.captureMode == com.logisticsmanagement.app.model.CaptureMode.APP_PAGE) {
+            Intent(context, DouyinCaptureActivity::class.java)
+                .putExtra("accountId", account.id).putExtra("remoteOrderId", source.remoteOrderId)
+        } else Intent(context, PlatformBrowserActivity::class.java)
             .putExtra("accountId", account.id).putExtra("sourceId", source.id)
             .putExtra("shipmentId", source.shipmentId).putExtra("mode", "source")
         if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+        return intent
     }
 
     fun openOrder(context: Context, account: Account, order: Order) {
         require(order.accountId == account.id)
+        if (account.platform == Platform.DOUYIN && account.captureMode == com.logisticsmanagement.app.model.CaptureMode.APP_PAGE) {
+            val native = Intent(context, DouyinCaptureActivity::class.java).putExtra("accountId", account.id).putExtra("remoteOrderId", order.remoteId)
+            if (context !is android.app.Activity) native.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(native)
+            return
+        }
         val intent = Intent(context, PlatformBrowserActivity::class.java)
             .putExtra("accountId", account.id).putExtra("orderId", order.id).putExtra("mode", "order")
         if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
 
-    fun openXiaomiConfiguration(context: Context, account: Account) {
-        val intent = Intent(context, XiaomiAccountActivity::class.java).putExtra("accountId", account.id)
-        if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-    }
-
     internal suspend fun rememberCapture(account: Account, capture: CapturedResponse) {
-        if (capture.kind !in setOf("response", "ssr", "dom")) return
+        if (capture.kind !in setOf("response", "ssr", "dom", "capacity", "accessibility", "redirect", "trackingUnavailable")) return
         accountCredentials(account) {
             val key = "account.${account.id}.captures"
             val previous = credentials.getSecret(key)?.let { platformJson.decodeFromString<List<CapturedResponse>>(it) }.orEmpty()
@@ -126,7 +141,7 @@ class PlatformRegistry(
                     }
                     put("endpoint", uri.buildUpon().clearQuery().fragment(null).path(path).build().toString())
                     put("httpStatus", capture.status)
-                    put("characters", capture.body.length)
+                    put("characters", capture.characters ?: capture.body.length)
                     put("schema", if (capture.kind == "dom") JsonPrimitive("DOM text") else responseSchema(capture.body))
                 }
             }))

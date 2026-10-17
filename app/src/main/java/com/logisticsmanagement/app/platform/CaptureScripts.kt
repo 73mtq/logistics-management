@@ -7,12 +7,10 @@ import kotlinx.serialization.json.JsonPrimitive
 internal object CaptureScripts {
     fun install(platform: Platform): String {
         val patterns = when (platform) {
-            Platform.JD -> listOf("order_list_m", "get_logistics_list_by_order_m", "deal_wuliu", "orderTrack")
+            Platform.JD -> listOf("order_list_m", "order_detail_m", "order_common_order_detail", "get_logistics_list_by_order_m", "deal_wuliu", "orderTrack")
             Platform.PDD -> listOf("order_list_v4", "order_detail", "logistics", "goods_express")
             Platform.TAOBAO -> listOf("mtop.taobao.order.queryboughtlistv2", "mtop.taobao.logisticstracedetailservice.queryalltrace")
-            Platform.DOUYIN -> listOf("order", "logistic", "express", "shipping")
-            Platform.XIAOMI -> listOf("/cpa/express/")
-            Platform.MANUAL -> error("手动包裹没有网页接入")
+            Platform.DOUYIN -> emptyList()
         }
         val filter = JsonArray(patterns.map(::JsonPrimitive)).toString()
         return """
@@ -22,18 +20,17 @@ internal object CaptureScripts {
               window.__logisticsInstalled = true;
               const patterns = $filter;
               const limit = 1048576;
-              function send(kind, url, body, status) {
+              function send(kind, url, body, status, requestType, requestPage) {
                 const value = String(body == null ? '' : body);
                 if (value.length > limit) {
-                  LogisticsCapture.postMessage(JSON.stringify({kind:'error',url:String(url),body:'响应超过采集容量',status:0}));
+                  LogisticsCapture.postMessage(JSON.stringify({kind:'capacity',url:String(url),pageUrl:location.href,body:'响应超过采集容量',status:0,characters:value.length}));
                   return;
                 }
-                LogisticsCapture.postMessage(JSON.stringify({kind:kind,url:String(url || location.href),body:value,status:Number(status || 0)}));
+                LogisticsCapture.postMessage(JSON.stringify({kind:kind,url:String(url || location.href),pageUrl:location.href,body:value,status:Number(status || 0),requestType:String(requestType || ''),requestPage:Number(requestPage || 0)}));
               }
               function relevant(url, body) {
                 const u = String(url).toLowerCase();
-                return patterns.some(function(p) { return u.indexOf(p.toLowerCase()) >= 0; }) ||
-                  (${platform == Platform.DOUYIN} && /\"(?:order|logistics|express)[^\"]*\"/i.test(String(body)));
+                return patterns.some(function(p) { return u.indexOf(p.toLowerCase()) >= 0; });
               }
               const originalOpen = XMLHttpRequest.prototype.open;
               const originalSend = XMLHttpRequest.prototype.send;
@@ -42,24 +39,35 @@ internal object CaptureScripts {
                 return originalOpen.apply(this, arguments);
               };
               XMLHttpRequest.prototype.send = function() {
+                let requestType = '';
+                let requestPage = 0;
+                if (this.__logisticsUrl.indexOf('order_list_v4') >= 0 && typeof arguments[0] === 'string') {
+                  try { const parsed = JSON.parse(arguments[0]); requestType = parsed.type || ''; requestPage = Number(parsed.page || 0); } catch (e) {}
+                }
                 this.addEventListener('load', function() {
                   if (this.responseType && this.responseType !== 'text' && this.responseType !== 'json') return;
                   const body = this.responseType === 'json' ? JSON.stringify(this.response) : this.responseText;
-                  if (relevant(this.__logisticsUrl, body)) send('response', this.__logisticsUrl, body, this.status);
+                  if (relevant(this.__logisticsUrl, body)) send('response', this.__logisticsUrl, body, this.status, requestType, requestPage);
                 });
                 return originalSend.apply(this, arguments);
               };
               if (window.fetch) {
                 const originalFetch = window.fetch;
                 window.fetch = function(input, init) {
+                  const url = new URL(String(input && input.url || input), location.href).href;
+                  let requestType = '';
+                  let requestPage = 0;
+                  if (url.indexOf('order_list_v4') >= 0 && init && typeof init.body === 'string') {
+                    try { const parsed = JSON.parse(init.body); requestType = parsed.type || ''; requestPage = Number(parsed.page || 0); } catch (e) {}
+                  }
                   const result = originalFetch.apply(this, arguments);
                   result.then(function(response) {
                     const type = response.headers.get('content-type') || '';
-                    if (!relevant(response.url, '') && type.indexOf('json') < 0) return;
+                    if (!relevant(response.url, '')) return;
                     response.clone().text().then(function(body) {
-                      if (relevant(response.url, body)) send('response', response.url, body, response.status);
+                      if (relevant(response.url, body)) send('response', response.url, body, response.status, requestType, requestPage);
                     }).catch(function(error) { send('error', response.url, String(error), 0); });
-                  }, function(error) { send('network', String(input && input.url || input), String(error), 0); });
+                  }, function(error) { if (relevant(url, '')) send('network', url, String(error), 0); });
                   return result;
                 };
               }
@@ -137,6 +145,49 @@ internal object CaptureScripts {
             const text = (e.innerText || '').trim();
             return ['查看物流','查物流','物流详情','物流信息'].includes(text) && e.getBoundingClientRect().height > 0;
           }).sort(function(a,b) { return a.getBoundingClientRect().height - b.getBoundingClientRect().height; });
+          const express = document.getElementById('orderExpressBlock');
+          if (!matches.length && express && express.getBoundingClientRect().height > 0) {
+            const entry = Array.from(express.querySelectorAll('div,span')).find(function(e) { return !e.children.length && (e.innerText||'').trim() && e.getBoundingClientRect().height>0; });
+            if (entry) matches.push(entry);
+          }
+          const text = document.body.innerText;
+          LogisticsCapture.postMessage(JSON.stringify({kind:'dom',url:location.href,pageUrl:location.href,body:text,status:200}));
+          LogisticsCapture.postMessage(JSON.stringify({kind:'trackingAction',url:location.href,pageUrl:location.href,body:JSON.stringify({clicked:matches.length>0,matches:matches.length,targetId:matches.length ? matches[0].id : ''}),status:200}));
+          if (!matches.length) {
+            const orderId = new URL(location.href).searchParams.get('order_sn');
+            const ready = orderId && text.includes(orderId) && text.includes('订单编号') && ['查看更多订单信息','查看更多订单和优惠信息'].some(function(label) { return text.includes(label); });
+            const prior = window.__pddTrackingMissing;
+            if (ready && prior && prior.text === text && Date.now() - prior.since >= 3000) {
+              LogisticsCapture.postMessage(JSON.stringify({kind:'trackingUnavailable',url:location.href,pageUrl:location.href,body:text,status:200}));
+            } else {
+              window.__pddTrackingMissing = ready ? {text:text,since:Date.now()} : null;
+            }
+            return false;
+          }
+          window.__pddTrackingMissing = null;
+          matches[0].click(); return true;
+        })();
+    """.trimIndent()
+
+    val pddOrders = """
+        (function() {
+          const elements = Array.from(document.querySelectorAll('a,button,div,span,li'));
+          const matches = elements.filter(function(e) {
+            const text = (e.innerText || '').trim();
+            return ['全部','全部订单','查看全部'].includes(text) && e.getBoundingClientRect().height > 0;
+          }).sort(function(a,b) { return a.getBoundingClientRect().height - b.getBoundingClientRect().height; });
+          if (!matches.length) return false;
+          matches[0].click(); return true;
+        })();
+    """.trimIndent()
+
+    fun pddTab(tab: String) = """
+        (function() {
+          const elements = Array.from(document.querySelectorAll('a,button,div,span,li'));
+          const matches = elements.filter(function(e) {
+            const text = (e.innerText || '').trim();
+            return text === '$tab' && e.getBoundingClientRect().height > 0;
+          });
           if (!matches.length) return false;
           matches[0].click(); return true;
         })();

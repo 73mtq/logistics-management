@@ -51,4 +51,9 @@ class CredentialStore(context: Context) {
         preferences.all.keys.filter { it.startsWith("account.$accountId.") }.forEach(edit::remove)
         check(edit.commit())
     }
+    fun deleteServiceSecrets() {
+        val edit = preferences.edit()
+        preferences.all.keys.filter { it.startsWith("ai.") || it.startsWith("kuaidi100.") }.forEach(edit::remove)
+        check(edit.commit())
+    }
 }

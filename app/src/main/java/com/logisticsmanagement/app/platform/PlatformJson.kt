@@ -14,6 +14,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.SerializationException
 import java.time.Instant
 import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.MonthDay
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
@@ -43,8 +45,9 @@ internal fun jsonObjectBody(value: JsonElement?): JsonObject = when (value) {
 
 internal fun parcelStatus(text: String): ParcelStatus = when {
     listOf("异常", "滞留", "退回", "拒收", "丢失", "破损").any(text::contains) -> ParcelStatus.EXCEPTION
-    listOf("待取件", "待自提", "等待取件", "请取件", "取件码", "到达驿站", "放入快递柜").any(text::contains) -> ParcelStatus.PICKUP
+    listOf("待取件", "待自提", "等待取件", "请取件").any(text::contains) -> ParcelStatus.PICKUP
     listOf("已签收", "签收成功", "已送达", "妥投", "交易成功", "已完成", "待评价").any(text::contains) -> ParcelStatus.SIGNED
+    listOf("取件码", "到达驿站", "放入快递柜").any(text::contains) -> ParcelStatus.PICKUP
     listOf("派送", "派件", "配送中", "正在配送").any(text::contains) -> ParcelStatus.DELIVERING
     listOf("待发货", "未发货", "待成团", "等待揽收").any(text::contains) -> ParcelStatus.WAITING_SHIPMENT
     listOf("运输", "转运", "发往", "到达", "揽收", "已发货", "待收货").any(text::contains) -> ParcelStatus.IN_TRANSIT
@@ -52,6 +55,10 @@ internal fun parcelStatus(text: String): ParcelStatus = when {
 }
 
 internal fun closedOrder(text: String): Boolean = listOf("取消", "关闭", "退款", "售后", "待付款", "未支付").any(text::contains)
+internal fun orderStatus(text: String): ParcelStatus = when (text.trim()) {
+    "完成", "交易完成", "交易成功", "已完成", "已收货", "已签收", "签收成功", "待评价", "已评价" -> ParcelStatus.SIGNED
+    else -> parcelStatus(text)
+}
 internal fun imageUrl(value: String): String? = when {
     value.startsWith("//") -> "https:$value"
     value.startsWith("https://") -> value
@@ -69,9 +76,24 @@ internal fun parsePlatformTime(value: String): Long = try {
         val format = when {
             text.matches(Regex("[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}")) -> "yyyy-MM-dd HH:mm:ss"
             text.matches(Regex("[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}")) -> "yyyy-MM-dd HH:mm"
+            text.matches(Regex("[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}")) -> "MM-dd HH:mm:ss"
+            text.matches(Regex("[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}")) -> "MM-dd HH:mm"
             else -> throw AppFailure("平台日期格式尚未支持", FailureKind.UNSUPPORTED_RESPONSE)
         }
-        LocalDateTime.parse(text, DateTimeFormatter.ofPattern(format)).atZone(ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()
+        val zone = ZoneId.of("Asia/Shanghai")
+        val millis = if (format.startsWith("MM-dd")) {
+            val dateText = text.substringBefore(' ')
+            val timeText = text.substringAfter(' ')
+            val monthDay = MonthDay.parse(dateText, DateTimeFormatter.ofPattern("MM-dd"))
+            val time = LocalTime.parse(timeText, DateTimeFormatter.ofPattern(if (format.endsWith(":ss")) "HH:mm:ss" else "HH:mm"))
+            val now = LocalDateTime.now(zone)
+            var candidate = LocalDateTime.of(monthDay.atYear(now.year), time)
+            if (candidate.isAfter(now)) candidate = candidate.minusYears(1)
+            candidate.atZone(zone).toInstant().toEpochMilli()
+        } else {
+            LocalDateTime.parse(text, DateTimeFormatter.ofPattern(format)).atZone(zone).toInstant().toEpochMilli()
+        }
+        millis
     }
 } catch (failure: DateTimeParseException) {
     throw AppFailure("平台返回了无效的日期", FailureKind.UNSUPPORTED_RESPONSE)

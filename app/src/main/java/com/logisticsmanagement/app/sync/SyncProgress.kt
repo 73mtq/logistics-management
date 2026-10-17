@@ -2,8 +2,11 @@ package com.logisticsmanagement.app.sync
 
 import com.logisticsmanagement.app.model.FailureKind
 import com.logisticsmanagement.app.model.ImportedOrder
+import com.logisticsmanagement.app.model.IngestResult
 
-enum class SyncStage { IMPORTING, TRACKING, COMPLETED, FAILED, CANCELLED }
+enum class SyncStage { IMPORTING, TRACKING, COMPLETED, PARTIAL, FAILED, CANCELLED }
+
+data class TrackingFailure(val sourceId: String, val message: String, val kind: FailureKind)
 
 data class SyncProgress(
     val accountId: String,
@@ -13,6 +16,9 @@ data class SyncProgress(
     val shipmentsTotal: Int = 0,
     val message: String,
     val failure: FailureKind? = null,
+    val result: IngestResult = IngestResult(),
+    val trackingFailures: List<TrackingFailure> = emptyList(),
+    val pending: Int = 0,
 )
 
 sealed interface SyncEvent {

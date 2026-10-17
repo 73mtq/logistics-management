@@ -3,6 +3,7 @@
 **/build/
 local.properties
 .work/
+work/
 .local-build-tools/
 .codegraph/
 *.jks

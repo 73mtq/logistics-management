@@ -1,29 +1,29 @@
 package com.logisticsmanagement.app.sync
 
+import android.app.NotificationManager
 import android.content.Context
+import android.os.SystemClock
 import androidx.work.*
 import com.logisticsmanagement.app.data.*
 import com.logisticsmanagement.app.model.*
-import com.logisticsmanagement.app.network.ManualTrackingService
 import com.logisticsmanagement.app.platform.PlatformRegistry
+import com.logisticsmanagement.app.platform.BrowserAdapter
+import com.logisticsmanagement.app.platform.PddAdapter
+import com.logisticsmanagement.app.platform.TaobaoAdapter
+import com.logisticsmanagement.app.platform.NativeOrderImportSession
+import com.logisticsmanagement.app.platform.NativeScan
+import com.logisticsmanagement.app.platform.NativeSyncProgressStore
+import com.logisticsmanagement.app.platform.NativeProgressSession
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.job
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.update
 import java.io.IOException
-import java.time.ZonedDateTime
-import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -31,10 +31,8 @@ class SyncCoordinator(
     private val context: Context,
     private val repository: LogisticsRepository,
     private val platforms: PlatformRegistry,
-    private val manualTracking: ManualTrackingService,
     private val settings: SettingsStore,
     private val credentials: CredentialStore,
-    private val notifications: LogisticsNotifications,
 ) {
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val activeJobs = ConcurrentHashMap<String, Job>()
@@ -42,192 +40,290 @@ class SyncCoordinator(
     private val mutableEvents = MutableSharedFlow<SyncEvent>(extraBufferCapacity = 64)
     val progress = mutableProgress.asStateFlow()
     val events = mutableEvents.asSharedFlow()
+    internal var awaitInitialization: suspend () -> Unit = {}
+    internal fun hasActiveAccounts() = activeJobs.isNotEmpty()
+    internal var nativeProgressStore = NativeSyncProgressStore(context, credentials)
+    internal var nativeCheckpoint: suspend (String, String) -> Unit = { _, _ -> }
+
     private fun report(value: SyncProgress) {
         mutableProgress.update { it + (value.accountId to value) }
         mutableEvents.tryEmit(SyncEvent.Progress(value))
     }
-    private data class ShipmentState(val shipment: Shipment, val eventId: String?)
-    private suspend fun snapshot(): Map<String, ShipmentState> = repository.getShipments().associate { shipment ->
-        shipment.id to ShipmentState(shipment, repository.getEvents(shipment.id).firstOrNull()?.id)
-    }
-    suspend fun syncAll() {
-        var firstFailure: AppFailure? = null
-        for (account in repository.getAccounts().filter { it.enabled }) {
-            try { syncAccount(account.id) }
-            catch (error: AppFailure) { if (firstFailure == null) firstFailure = error }
+
+    internal suspend fun captureNativeAccount(id: String, captureId: String, scans: ReceiveChannel<NativeScan>,
+        timeoutMillis: Long, onSession: (NativeOrderImportSession) -> Unit, onFinished: (NativeOrderImportSession) -> Unit,
+        pagination: Boolean = false, resume: Boolean = false, terminationReason: () -> String = { "采集已停止" }) = coroutineScope {
+        awaitInitialization()
+        val lock = locks.computeIfAbsent(id) { Mutex() }
+        if (!lock.tryLock()) throw AppFailure("该账号正在更新，请等待当前任务结束", FailureKind.CONFIGURATION)
+        val job = coroutineContext.job
+        activeJobs[id] = job
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        val runProgress = try {
+            val selected = repository.getAccount(id) ?: throw AppFailure("采集账号不存在", FailureKind.CONFIGURATION)
+            if (!selected.enabled || selected.deleted || selected.captureMode != CaptureMode.APP_PAGE || selected.platform != Platform.DOUYIN)
+                throw AppFailure("当前账号不能执行原生采集", FailureKind.CONFIGURATION)
+            if (pagination) NativeProgressSession(nativeProgressStore, nativeProgressStore.begin(selected, captureId, resume), nativeCheckpoint)
+            else null
+        } catch (failure: Throwable) { activeJobs.remove(id, job); lock.unlock(); throw failure }
+        val session = NativeOrderImportSession(id, captureId,
+            bind = { repository.bindNativeIdentity(id, it) },
+            existing = { remote -> repository.getOrders().firstOrNull { it.accountId == id && it.remoteId == remote } },
+            save = { identity, order -> withContext(NonCancellable) {
+                val result = repository.ingestNativeOrders(id, identity, OrderBatch(listOf(order)))
+                if (runProgress != null) { nativeCheckpoint("BUSINESS_COMMITTED", order.remoteId); runProgress.orderSaved(identity, order, result) }
+                result
+            } },
+            progress = { value -> report(SyncProgress(id, SyncStage.IMPORTING, value.totals.inserted + value.totals.updated,
+                shipmentsUpdated = value.logistics?.savedSources?.size ?: 0, message = value.message(), result = value.totals)) },
+            saveLogistics = { identity, remoteId, shipment -> withContext(NonCancellable) {
+                repository.ingestNativeLogistics(id, identity, remoteId, shipment)
+                if (runProgress != null) { nativeCheckpoint("LOGISTICS_COMMITTED", remoteId); runProgress.logisticsSaved(remoteId) }
+            } }, runProgress = runProgress)
+        try {
+            val account = checkNotNull(repository.getAccount(id))
+            if (!account.enabled || account.deleted || account.platform != Platform.DOUYIN || account.captureMode != CaptureMode.APP_PAGE)
+                throw AppFailure("当前账号不能执行抖音原生采集", FailureKind.CONFIGURATION)
+            repository.recordSyncAttempt(id)
+            repository.setSyncState(id, AccountState.SYNCING)
+            onSession(session)
+            val completed = withTimeoutOrNull(timeoutMillis) { for (scan in scans) session.accept(scan); true }
+            withContext(NonCancellable) {
+                runProgress?.finish(if (completed == null) "本次采集达到执行期限" else if (runProgress.value.complete) "本轮采集已完成" else "采集未完成，请继续采集")
+                val complete = completed == true && runProgress?.value?.complete == true
+                repository.setSyncState(id, if (complete) AccountState.READY else AccountState.PARTIAL, if (complete) null else session.message(),
+                    if (complete) System.currentTimeMillis() else null)
+                report(SyncProgress(id, if (complete) SyncStage.COMPLETED else SyncStage.PARTIAL, session.totals.inserted + session.totals.updated,
+                    shipmentsUpdated = session.logistics?.savedSources?.size ?: 0, message = session.message(), result = session.totals))
+            }
+        } catch (error: CancellationException) {
+            withContext(NonCancellable) {
+                val expired = SystemClock.elapsedRealtime() >= deadline
+                runProgress?.finish(if (expired) "本次采集达到执行期限" else terminationReason().ifBlank { "采集已中断，请继续采集" })
+                val message = (if (expired) "本次采集达到执行期限；" else "采集已停止；") + session.message()
+                repository.setSyncState(id, AccountState.PARTIAL, message)
+                report(SyncProgress(id, if (expired) SyncStage.PARTIAL else SyncStage.CANCELLED,
+                    session.totals.inserted + session.totals.updated, shipmentsUpdated = session.logistics?.savedSources?.size ?: 0,
+                    message = message, result = session.totals))
+            }
+            throw error
+        } catch (failure: AppFailure) {
+            withContext(NonCancellable) { runProgress?.finish(checkNotNull(failure.message)) }
+            repository.getAccount(id)?.let { failAccount(it, failure) }
+            throw failure
+        } finally {
+            try { withContext(NonCancellable) { onFinished(session) } }
+            finally { activeJobs.remove(id, job); lock.unlock() }
         }
-        val manual = repository.getShipments().any { shipment -> repository.getSources(shipment.id).any { it.platform == Platform.MANUAL } }
-        if (manual) {
-            try { syncManual() }
+    }
+
+    suspend fun syncAll(automatic: Boolean = false) {
+        awaitInitialization()
+        var firstFailure: AppFailure? = null
+        val now = System.currentTimeMillis()
+        for (account in repository.getAccounts().filter { it.enabled && it.captureMode == CaptureMode.WEB }) {
+            if (automatic && (account.lastAttemptAt?.let { now - it < AUTO_INTERVAL } == true || activeJobs.containsKey(account.id))) continue
+            try { syncAccount(account.id, automatic) }
             catch (error: AppFailure) { if (firstFailure == null) firstFailure = error }
         }
         firstFailure?.let { throw it }
     }
-    suspend fun syncManual() {
-        val before = snapshot()
-        try { withTimeout(8 * 60 * 1000L) { manualTracking.refreshAll() } }
-        catch (error: TimeoutCancellationException) {
-            notifyChanges(before)
-            throw AppFailure("手动包裹更新超过执行期限，请重新更新", FailureKind.NETWORK)
-        } catch (error: AppFailure) {
-            notifyChanges(before)
-            throw error
-        } catch (error: IOException) {
-            notifyChanges(before)
-            throw error
-        }
-        notifyChanges(before)
-    }
-    suspend fun syncAccount(id: String) = coroutineScope { locks.getOrPut(id) { Mutex() }.withLock {
-        val account = repository.getAccount(id) ?: throw AppFailure("账号不存在", FailureKind.CONFIGURATION)
-        if (!account.enabled || account.deleted) throw AppFailure("账号已停用", FailureKind.CONFIGURATION)
-        val before = snapshot()
-        if (repository.setSyncState(id, AccountState.SYNCING) != 1) throw AppFailure("账号已移除", FailureKind.CONFIGURATION)
-        val job = coroutineContext.job
-        activeJobs[id] = job
-        var importedCount = 0
-        var updatedCount = 0
-        report(SyncProgress(id, SyncStage.IMPORTING, message = "正在读取订单"))
+
+    suspend fun syncAccount(id: String, automatic: Boolean = false) = syncAccountWithEvidence(id, automatic)
+
+    internal suspend fun syncAccountWithEvidence(id: String, automatic: Boolean = false,
+        timeoutMillis: Long = ACCOUNT_TIMEOUT, evidence: SyncEvidence = SyncEvidence()): Unit = coroutineScope {
+        require(timeoutMillis > 0)
+        awaitInitialization()
+        val lock = locks.computeIfAbsent(id) { Mutex() }
+        if (!lock.tryLock()) return@coroutineScope
         try {
-            withTimeout(8 * 60 * 1000L) {
-                platforms.adapter(account.platform).sync(account) { batch ->
-                    repository.ingest(account, batch)
-                    importedCount += batch.size
-                    mutableEvents.emit(SyncEvent.Data(id, batch))
-                    report(SyncProgress(id, SyncStage.IMPORTING, importedCount, message = "已读取 $importedCount 个订单，正在读取后续页面"))
+            val account = repository.getAccount(id) ?: throw AppFailure("账号不存在", FailureKind.CONFIGURATION)
+            if (!account.enabled || account.deleted) throw AppFailure("账号已停用", FailureKind.CONFIGURATION)
+            if (automatic && (account.captureMode != CaptureMode.WEB || account.lastAttemptAt?.let { System.currentTimeMillis() - it < AUTO_INTERVAL } == true)) return@coroutineScope
+            val resumedIds = repository.pendingTracking(id).map { it.sourceId }.toSet()
+            val job = coroutineContext.job
+            activeJobs[id] = job
+            var totals = IngestResult()
+            var updated = 0
+            var total = 0
+            val failures = mutableListOf<TrackingFailure>()
+            val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+            try {
+                withContext(NonCancellable) {
+                    repository.recordSyncAttempt(id)
+                    check(repository.setSyncState(id, AccountState.SYNCING) == 1)
                 }
-                val sources = repository.getShipments().filter { it.status != ParcelStatus.SIGNED && !it.archived }
-                    .mapNotNull { shipment -> repository.getSources(shipment.id).firstOrNull { it.accountId == id } }
-                report(SyncProgress(id, SyncStage.TRACKING, importedCount, shipmentsTotal = sources.size, message = "正在更新 ${sources.size} 个在途包裹"))
-                for (source in sources) {
-                    repository.applyTracking(source, platforms.adapter(account.platform).tracking(account, source))
-                    updatedCount++
-                    report(SyncProgress(id, SyncStage.TRACKING, importedCount, updatedCount, sources.size, "已更新 $updatedCount / ${sources.size} 个包裹"))
+                report(SyncProgress(id, SyncStage.IMPORTING, message = "正在读取订单", pending = resumedIds.size))
+                val completed = withTimeoutOrNull(timeoutMillis) {
+                    val adapter = platforms.adapter(account.platform)
+                    val onBatch: suspend (OrderBatch) -> Unit = { batch ->
+                        withContext(NonCancellable) { totals += repository.ingest(account, batch) }
+                        report(SyncProgress(id, SyncStage.IMPORTING, totals.inserted + totals.updated,
+                            message = "${totals.description}，正在读取后续页面", result = totals,
+                            pending = repository.pendingTracking(id).size))
+                        evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.BATCH_SAVED))
+                        mutableEvents.emit(SyncEvent.Data(id, batch.orders))
+                    }
+                    when (adapter) {
+                        is PddAdapter -> adapter.syncWithEvidence(account, { evidence.onCapture(null, it) }, onBatch)
+                        is BrowserAdapter -> adapter.sync(account, { evidence.onCapture(null, it) }, onBatch)
+                        is TaobaoAdapter -> adapter.sync(account, { evidence.onCapture(null, it) }, onBatch)
+                        else -> adapter.sync(account, onBatch)
+                    }
+                    if (account.captureMode == CaptureMode.APP_PAGE) return@withTimeoutOrNull true
+                    val prepared = repository.prepareTracking(id)
+                    val queue = prepared.filter { it.sourceId in resumedIds } + prepared.filterNot { it.sourceId in resumedIds }
+                    total = queue.size
+                    if (queue.isNotEmpty()) withContext(Dispatchers.Main.immediate) {
+                        var currentSource: String? = null
+                        val opened = when (adapter) {
+                            is BrowserAdapter -> adapter.openTrackingSession(account) { evidence.onCapture(currentSource, it) }
+                            is TaobaoAdapter -> adapter.openTrackingSession(account) { evidence.onCapture(currentSource, it) }
+                            else -> adapter.openTrackingSession(account)
+                        }
+                        opened.use { session ->
+                            for (item in queue) {
+                                if (deadline - SystemClock.elapsedRealtime() < 46_000) break
+                                val source = repository.getSource(item.sourceId) ?: continue
+                                currentSource = source.id
+                                repository.recordTrackingAttempt(source.id)
+                                report(SyncProgress(id, SyncStage.TRACKING, totals.inserted + totals.updated, updated, total,
+                                    "正在查询物流，已更新 $updated 个，待查询 ${repository.pendingTracking(id).size} 个",
+                                    result = totals, trackingFailures = failures.toList(), pending = repository.pendingTracking(id).size))
+                                evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.TRACKING_STARTED, source.id))
+                                try {
+                                    val incoming = session.query(source)
+                                    withContext(NonCancellable) {
+                                        repository.applyTrackingAndFinish(source, incoming)
+                                        updated++
+                                    }
+                                    evidence.onTrackingSaved(source, incoming)
+                                    evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.TRACKING_SAVED, source.id))
+                                } catch (error: AppFailure) {
+                                    repository.recordTrackingAttempt(source.id, error.message)
+                                    failures.add(TrackingFailure(source.id, checkNotNull(error.message), error.kind))
+                                    evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.TRACKING_FAILED, source.id))
+                                    if (error.kind in setOf(FailureKind.NEEDS_LOGIN, FailureKind.NEEDS_VERIFICATION, FailureKind.UNSUPPORTED_WEBVIEW)) throw error
+                                } catch (error: IOException) {
+                                    val message = "该包裹的网络请求失败"
+                                    repository.recordTrackingAttempt(source.id, message)
+                                    failures.add(TrackingFailure(source.id, message, FailureKind.NETWORK))
+                                }
+                                report(SyncProgress(id, SyncStage.TRACKING, totals.inserted + totals.updated, updated, total,
+                                    "已更新 $updated 个，失败 ${failures.size} 个，待查询 ${repository.pendingTracking(id).size} 个",
+                                    result = totals, trackingFailures = failures.toList(), pending = repository.pendingTracking(id).size))
+                            }
+                        }
+                    }
+                    true
                 }
-            }
-            if (repository.setSyncState(id, AccountState.READY, lastSyncedAt = System.currentTimeMillis()) == 1) {
-                report(SyncProgress(id, SyncStage.COMPLETED, importedCount, updatedCount, updatedCount, "更新完成"))
-                notifications.clearAccount(account)
-                notifyChanges(before)
-            }
-        } catch (error: TimeoutCancellationException) {
-            val failure = AppFailure("${account.platform.displayName}同步超过执行期限，请打开应用重新更新", FailureKind.NETWORK)
-            failAccount(account, failure)
-            throw failure
-        } catch (error: AppFailure) {
-            failAccount(account, error)
-            throw error
-        } catch (error: IOException) {
-            val failure = AppFailure("${account.platform.displayName}网络请求失败，请检查网络后重新更新", FailureKind.NETWORK)
-            failAccount(account, failure)
-            throw failure
-        } catch (error: CancellationException) {
-            withContext(NonCancellable) { repository.setSyncState(id, AccountState.FAILED, "更新被中断，请重新更新") }
-            report(SyncProgress(id, SyncStage.CANCELLED, importedCount, updatedCount, message = "更新被中断"))
-            throw error
-        } finally {
-            activeJobs.remove(id, job)
-        }
-    } }
+                val pending = if (account.captureMode == CaptureMode.WEB) repository.pendingTracking(id).size else 0
+                val partial = completed == null || pending > 0
+                val state = if (partial) AccountState.PARTIAL else AccountState.READY
+                val message = (if (completed == null) "本次更新达到执行期限；" else "") +
+                    "${totals.description}；物流成功 $updated 个，失败 ${failures.size} 个，待查询 $pending 个"
+                repository.setSyncState(id, state, if (partial) message else null, if (!partial) System.currentTimeMillis() else null)
+                report(SyncProgress(id, if (partial) SyncStage.PARTIAL else SyncStage.COMPLETED, totals.inserted + totals.updated,
+                    updated, total, message, result = totals, trackingFailures = failures.toList(), pending = pending))
+            } catch (error: AppFailure) {
+                report(SyncProgress(id, SyncStage.FAILED, totals.inserted + totals.updated, updated, total,
+                    checkNotNull(error.message), result = totals, trackingFailures = failures.toList(),
+                    pending = repository.pendingTracking(id).size))
+                failAccount(account, error)
+                throw error
+            } catch (error: IOException) {
+                val failure = AppFailure("${account.platform.displayName}网络请求失败，请检查网络连接", FailureKind.NETWORK)
+                failAccount(account, failure)
+                throw failure
+            } catch (error: CancellationException) {
+                withContext(NonCancellable) {
+                    val pending = repository.pendingTracking(id).size
+                    val message = "更新已中断；${totals.description}；物流成功 $updated 个，失败 ${failures.size} 个，待查询 $pending 个"
+                    repository.setSyncState(id, AccountState.PARTIAL, message)
+                    report(SyncProgress(id, SyncStage.CANCELLED, totals.inserted + totals.updated, updated, total,
+                        message, result = totals, trackingFailures = failures.toList(), pending = pending))
+                }
+                throw error
+            } finally { activeJobs.remove(id, job) }
+        } finally { lock.unlock() }
+    }
+
     private suspend fun failAccount(account: Account, error: AppFailure) {
         val state = when (error.kind) {
             FailureKind.NEEDS_LOGIN -> AccountState.NEEDS_LOGIN
             FailureKind.NEEDS_VERIFICATION -> AccountState.NEEDS_VERIFICATION
             else -> AccountState.FAILED
         }
-        val updated = repository.setSyncState(account.id, state, error.message)
-        if (updated == 1) {
+        if (repository.setSyncState(account.id, state, error.message) == 1) {
             val previous = mutableProgress.value[account.id]
-            report(SyncProgress(account.id, SyncStage.FAILED, previous?.ordersImported ?: 0, previous?.shipmentsUpdated ?: 0, previous?.shipmentsTotal ?: 0, error.message.orEmpty(), error.kind))
-        }
-        if (updated == 1 && (state == AccountState.NEEDS_LOGIN || state == AccountState.NEEDS_VERIFICATION)) notifications.account(account, error.message.orEmpty())
-    }
-    private suspend fun notifyChanges(before: Map<String, ShipmentState>) {
-        for (shipment in repository.getShipments().filter { !it.archived }) {
-            val previous = before[shipment.id]
-            val event = repository.getEvents(shipment.id).firstOrNull()
-            if ((previous == null && shipment.status == ParcelStatus.PICKUP) || (previous != null && (previous.shipment.status != shipment.status || previous.shipment.pickupCode != shipment.pickupCode || previous.eventId != event?.id))) {
-                notifications.tracking(shipment, event)
-            }
+            report(SyncProgress(account.id, SyncStage.FAILED, previous?.ordersImported ?: 0,
+                previous?.shipmentsUpdated ?: 0, previous?.shipmentsTotal ?: 0, checkNotNull(error.message), error.kind,
+                previous?.result ?: IngestResult(), previous?.trackingFailures.orEmpty(),
+                repository.pendingTracking(account.id).size))
         }
     }
-    suspend fun refreshShipment(id: String) = coroutineScope {
-        val source = repository.getSources(id).firstOrNull() ?: throw AppFailure("包裹缺少来源", FailureKind.CONFIGURATION)
-        if (source.platform == Platform.MANUAL) {
-            val before = snapshot()
-            manualTracking.refresh(id)
-            notifyChanges(before)
-            return@coroutineScope
-        }
-        locks.getOrPut(source.accountId) { Mutex() }.withLock {
-            val account = repository.getAccount(source.accountId)?.takeUnless { it.deleted } ?: throw AppFailure("来源账号已移除，请重新绑定账号", FailureKind.NEEDS_LOGIN)
-            if (!account.enabled) throw AppFailure("来源账号已停用", FailureKind.CONFIGURATION)
+
+    suspend fun refreshShipment(id: String): Unit = coroutineScope {
+        awaitInitialization()
+        val source = repository.getSources(id).firstOrNull {
+            repository.getAccount(it.accountId)?.let { account -> account.enabled && !account.deleted } == true
+        } ?: throw AppFailure("包裹缺少可用来源账号", FailureKind.NEEDS_LOGIN)
+        locks.computeIfAbsent(source.accountId) { Mutex() }.withLock {
+            val account = checkNotNull(repository.getAccount(source.accountId))
             val job = coroutineContext.job
             activeJobs[account.id] = job
-            val before = snapshot()
             try {
-                withTimeout(8 * 60 * 1000L) {
-                    repository.applyTracking(source, platforms.adapter(source.platform).tracking(account, source))
+                val completed = withTimeoutOrNull(ACCOUNT_TIMEOUT) {
+                    val incoming = platforms.adapter(source.platform).tracking(account, source)
+                    withContext(NonCancellable) { repository.applyTrackingAndFinish(source, incoming) }
+                    true
                 }
-                notifyChanges(before)
-            } catch (error: TimeoutCancellationException) {
-                val failure = AppFailure("物流查询超过执行期限，请重新更新", FailureKind.NETWORK)
-                failAccount(account, failure)
-                throw failure
-            } catch (error: AppFailure) {
-                failAccount(account, error)
-                throw error
-            } catch (error: IOException) {
-                val failure = AppFailure("物流查询网络请求失败", FailureKind.NETWORK)
-                failAccount(account, failure)
-                throw failure
-            } finally {
-                activeJobs.remove(account.id, job)
-            }
+                if (completed == null) throw AppFailure("物流查询达到执行期限，请重新更新", FailureKind.NETWORK)
+            } catch (error: AppFailure) { failAccount(account, error); throw error }
+            finally { activeJobs.remove(account.id, job) }
         }
     }
+
     suspend fun removeAccount(id: String) {
         val account = repository.getAccount(id) ?: throw AppFailure("账号不存在", FailureKind.CONFIGURATION)
         repository.saveAccount(account.copy(enabled = false, deleted = true, state = AccountState.REMOVED))
         activeJobs[id]?.cancel()
-        notifications.clearAccount(account)
         WorkManager.getInstance(context).cancelUniqueWork("account_$id")
-        locks.getOrPut(id) { Mutex() }.withLock {
+        locks.computeIfAbsent(id) { Mutex() }.withLock {
             platforms.deleteAccountProfile(account)
             credentials.deleteAccount(id)
         }
     }
+
     suspend fun updateSchedules() {
         val manager = WorkManager.getInstance(context)
+        manager.cancelUniqueWork("manual_tracking")
+        manager.cancelAllWorkByTag("daily_report")
         val config = settings.get()
         for (account in repository.getAccounts()) {
             val name = "account_${account.id}"
-            if (!config.backgroundEnabled || !account.enabled) { manager.cancelUniqueWork(name); continue }
+            if (!config.backgroundEnabled || !account.enabled || account.captureMode != CaptureMode.WEB) {
+                manager.cancelUniqueWork(name)
+                continue
+            }
             val request = PeriodicWorkRequestBuilder<AccountSyncWorker>(30, TimeUnit.MINUTES)
                 .setInputData(workDataOf("accountId" to account.id))
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
             manager.enqueueUniquePeriodicWork(name, ExistingPeriodicWorkPolicy.UPDATE, request)
         }
-        if (config.backgroundEnabled && repository.getShipments().any { repository.getSources(it.id).any { ref -> ref.platform == Platform.MANUAL } }) {
-            manager.enqueueUniquePeriodicWork("manual_tracking", ExistingPeriodicWorkPolicy.UPDATE,
-                PeriodicWorkRequestBuilder<ManualTrackingWorker>(30, TimeUnit.MINUTES).setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build())
-        } else manager.cancelUniqueWork("manual_tracking")
-        val schedulePreferences = context.getSharedPreferences("work_schedules", Context.MODE_PRIVATE)
-        val dailyConfig = "${config.aiEnabled}:${config.dailyReportEnabled}:${config.dailyReportHour}:${config.dailyReportMinute}"
-        if (schedulePreferences.getString("daily", null) != dailyConfig) {
-            manager.cancelAllWorkByTag("daily_report")
-            check(schedulePreferences.edit().putString("daily", dailyConfig).commit())
+        val preferences = context.getSharedPreferences("work_schedules", Context.MODE_PRIVATE)
+        if (!preferences.getBoolean("cleanup_v2", false)) {
+            val notifications = context.getSystemService(NotificationManager::class.java)
+            notifications.cancelAll()
+            listOf("tracking", "accounts", "reports").forEach(notifications::deleteNotificationChannel)
+            check(context.getSharedPreferences("notification_events", Context.MODE_PRIVATE).edit().clear().commit())
+            check(preferences.edit().clear().putBoolean("cleanup_v2", true).commit())
         }
-        if (config.aiEnabled && config.dailyReportEnabled) scheduleReport()
     }
-    suspend fun scheduleReport(afterRun: Boolean = false) {
-        val config = settings.get()
-        if (!config.aiEnabled || !config.dailyReportEnabled) return
-        val now = ZonedDateTime.now()
-        var next = now.withHour(config.dailyReportHour).withMinute(config.dailyReportMinute).withSecond(0).withNano(0)
-        if (afterRun || !next.isAfter(now)) next = next.plusDays(1)
-        val request = OneTimeWorkRequestBuilder<DailyReportWorker>().setInitialDelay(Duration.between(now, next).toMillis(), TimeUnit.MILLISECONDS)
-            .addTag("daily_report").setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
-        WorkManager.getInstance(context).enqueueUniqueWork("daily_report_${next.toLocalDate()}", ExistingWorkPolicy.KEEP, request)
+
+    private companion object {
+        const val ACCOUNT_TIMEOUT = 8 * 60_000L
+        const val AUTO_INTERVAL = 15 * 60_000L
     }
 }

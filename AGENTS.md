@@ -8,10 +8,11 @@
 - [docs/project-map.md](docs/project-map.md)：项目关系图、调用过程与按任务选择源码的入口。
 - [docs/architecture.md](docs/architecture.md)：数据保留、合并、会话、后台任务与隐私规则。
 - [docs/acceptance.md](docs/acceptance.md)：已经执行的验证及未验证范围。
+- [docs/development-plan.md](docs/development-plan.md)：暂停状态、后续顺序及恢复入口。
 - [docs/codegraph.md](docs/codegraph.md)：本地代码关系索引与查询命令。
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)：参考项目与复用许可。
 
-平台适配器存在于源码中，只能说明已经编写相应流程。平台的真实可用范围以验收记录为依据。抖音订单与轨迹响应映射尚未完成。
+平台适配器存在于源码中，只能说明已经编写相应流程。平台的真实可用范围以验收记录为依据。抖音已取得一个真实已签收订单的导入与物流关联证据；完整列表结束、部分字段及服务自动重连仍有未完成范围。
 
 ## CodeGraph
 
@@ -37,3 +38,9 @@ codegraph callers syncAccount
 - 需要登录、验证码或授权时由用户在手机中完成。涉及实际服务的验证需要有效配置与相应设备条件。
 
 构建版本以根目录和 `app/build.gradle.kts` 为准。文档修改无需运行 Android 业务测试；需要验证代码时使用 README 中对应任务，并将实际通过、跳过和未运行范围分别记录。
+
+当前暂停功能开发，保留现有账号、profile及本机证据。恢复开发由用户指定任务后执行，不自动启动平台查询或抖音采集。
+
+## 后续阶段的 Jev 辅助
+
+T15及之后新建阶段采用[Jev辅助规则](docs/jev-workflow.md)，明确每阶段的输入、固定选项、来源及核查。沿用jev-1.14.0、单次十秒、每阶段最多一百次及相同输入缓存；私人资料保存在本机。模型结果逐项复核，页面自动操作保持0.95概率及程序检查，交易操作禁止。模型效果、工具验收和缺少样本的范围分别记录。

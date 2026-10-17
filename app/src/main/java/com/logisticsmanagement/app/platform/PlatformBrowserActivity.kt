@@ -29,7 +29,6 @@ class PlatformBrowserActivity : ComponentActivity() {
     private val registry get() = (application as LogisticsApplication).container.platforms
     private lateinit var status: TextView
     private lateinit var webContainer: LinearLayout
-    private lateinit var xiaomiConfiguration: Button
     private var session: PlatformWebView? = null
     private var account: Account? = null
     private var source: SourceRef? = null
@@ -85,15 +84,12 @@ class PlatformBrowserActivity : ComponentActivity() {
                     if (android.net.Uri.parse(browser.currentUrl).host == "www.douyin.com") browser.load(adapter.orderListUrl)
                     else browser.evaluate(CaptureScripts.douyinOrders)
                     status.text = "请在官方商城中进入订单页面，应用将采集页面响应"
-                } else session?.load(adapter.orderListUrl)
+                } else {
+                    loginFinished = true
+                    session?.load(adapter.orderListUrl)
+                }
             }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        xiaomiConfiguration = Button(this).apply {
-            text = "小米账号配置"
-            minHeight = (48 * resources.displayMetrics.density).toInt()
-            setOnClickListener { account?.takeIf { it.platform == Platform.XIAOMI }?.let { registry.openXiaomiConfiguration(this@PlatformBrowserActivity, it) } }
-        }
-        platformActions.addView(xiaomiConfiguration, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         webContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(actions)
         root.addView(platformActions)
@@ -114,7 +110,6 @@ class PlatformBrowserActivity : ComponentActivity() {
         val selected = registry.repository.getAccount(id)?.takeIf { !it.deleted }
             ?: throw AppFailure("平台账号已移除", FailureKind.CONFIGURATION)
         account = selected
-        xiaomiConfiguration.visibility = if (selected.platform == Platform.XIAOMI) View.VISIBLE else View.GONE
         val shipmentId = intent.getStringExtra("shipmentId")
         val sourceId = intent.getStringExtra("sourceId")
         if (shipmentId != null && sourceId != null) source = registry.repository.getSources(shipmentId).firstOrNull { it.id == sourceId && it.accountId == id }
@@ -157,8 +152,8 @@ class PlatformBrowserActivity : ComponentActivity() {
                             val page = withContext(Dispatchers.Default) { adapter.parseOrders(capture) }
                             if (page != null) {
                                 adapter.rememberOrderPage(selected, page)
-                                registry.repository.ingest(selected, page.orders)
-                                status.text = "已保存当前页面的 ${page.orders.size} 个订单"
+                                val result = registry.repository.ingest(selected, com.logisticsmanagement.app.model.OrderBatch(page.orders, page.excludedRemoteIds, page.remoteIds.size))
+                                status.text = if (page.remoteIds.isEmpty()) "平台当前订单列表为空" else "已读取 ${page.remoteIds.size} 个订单，${result.description}"
                                 updateState(AccountState.READY, null)
                             }
                             source?.let { currentSource ->
@@ -181,12 +176,12 @@ class PlatformBrowserActivity : ComponentActivity() {
             while (!loginFinished && !isFinishing) {
                 delay(2_000)
                 if (hasLoginSession(selected)) {
+                    android.util.Log.i("ParcelLogin", "autoLoginReady accountId=${selected.id} url=${session?.currentUrl}")
                     updateState(AccountState.READY, null)
                     loginFinished = true
                     status.text = "登录会话已经保存"
-                    if (selected.platform == Platform.XIAOMI && intent.getBooleanExtra("returnToXiaomiConfiguration", false)) {
-                        registry.openXiaomiConfiguration(this@PlatformBrowserActivity, selected)
-                    }
+                    val current = checkNotNull(registry.repository.getAccount(selected.id))
+                    registry.repository.saveAccount(current.copy(lastAttemptAt = null))
                     setResult(RESULT_OK)
                     finish()
                 }
@@ -197,7 +192,6 @@ class PlatformBrowserActivity : ComponentActivity() {
     private fun hasLoginSession(account: Account): Boolean {
         val browser = session ?: return false
         if (browser.currentUrl.isBlank() || PlatformWebView.isLoginUrl(browser.currentUrl)) return false
-        if (account.platform == Platform.XIAOMI && android.net.Uri.parse(browser.currentUrl).host != "api.assistant.miui.com") return false
         return hasPlatformLoginSession(registry.profiles.profile(account), account.platform)
     }
 
@@ -208,7 +202,10 @@ class PlatformBrowserActivity : ComponentActivity() {
                 updateState(AccountState.NEEDS_VERIFICATION, "请在官方商城订单页面采集真实响应")
                 status.text = "会话已经保存，请进入官方商城订单页面以采集响应"
             } else if (hasLoginSession(current)) {
+                android.util.Log.i("ParcelLogin", "finishLoginReady accountId=${current.id} url=${session?.currentUrl}")
                 updateState(AccountState.READY, null)
+                val stored = checkNotNull(registry.repository.getAccount(current.id))
+                registry.repository.saveAccount(stored.copy(lastAttemptAt = null))
                 setResult(RESULT_OK)
                 finish()
             } else throw AppFailure("还没有取得完整的平台登录会话，请完成网页登录与验证", FailureKind.NEEDS_LOGIN)

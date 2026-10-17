@@ -1,12 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <queries>
-        <package android:name="com.miui.personalassistant" />
-        <package android:name="com.miui.home" />
-        <package android:name="com.xiaomi.misettings" />
-        <package android:name="com.xiaomi.market" />
+        <package android:name="com.ss.android.ugc.aweme" />
     </queries>
     <application
         android:name=".LogisticsApplication"
@@ -17,7 +13,7 @@
         android:icon="@drawable/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.Logistics"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -25,6 +21,10 @@
             </intent-filter>
         </activity>
         <activity android:name=".platform.PlatformBrowserActivity" android:exported="false" />
-        <activity android:name=".platform.XiaomiAccountActivity" android:exported="false" />
+        <activity android:name=".platform.DouyinCaptureActivity" android:exported="false" />
+        <service android:name=".platform.DouyinCaptureService" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:label="@string/douyin_accessibility_label">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/douyin_accessibility" />
+        </service>
     </application>
 </manifest>

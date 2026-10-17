@@ -9,8 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -69,7 +67,7 @@ internal fun ShipmentDetailScreen(container: AppContainer, shipment: Shipment?, 
             items(sources, key = { it.id }) { source ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("${source.platform.displayName} · ${source.accountLabel}", style = MaterialTheme.typography.bodyLarge)
-                    if (source.orderUrl.isNotBlank()) {
+                    if (source.orderUrl.isNotBlank() || source.platform == com.logisticsmanagement.app.model.Platform.DOUYIN) {
                         val account = accounts.firstOrNull { it.id == source.accountId }
                         TextButton(onClick = { container.platforms.openSource(context, checkNotNull(account), source) }, enabled = account != null, modifier = Modifier.sizeIn(minHeight = 48.dp)) { Text(if (account == null) "来源账号已经移除" else "查看平台订单") }
                     }
@@ -86,47 +84,9 @@ internal fun ShipmentDetailScreen(container: AppContainer, shipment: Shipment?, 
             item { SectionTitle("物流记录") }
             if (events.isEmpty()) item { Text("暂未获取到物流记录。更新物流后查看。", style = MaterialTheme.typography.bodyLarge) }
             items(events, key = { it.id }) { event ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth().testTag("trackingEvent_${event.id}")) {
                     Text(formatTimestamp(event.time), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(event.text, style = MaterialTheme.typography.bodyLarge)
-                }
-            }
-        }
-    }
-}
-
-private val ManualCarriers = listOf("顺丰速运" to "shunfeng", "中通快递" to "zhongtong", "圆通速递" to "yuantong", "韵达快递" to "yunda", "申通快递" to "shentong", "京东物流" to "jd", "中国邮政" to "youzhengguonei", "EMS" to "ems", "德邦快递" to "debangkuaidi", "极兔速递" to "jtexpress")
-
-@Composable
-internal fun AddShipmentScreen(container: AppContainer, busy: Map<String, Boolean>, runAction: RunAction, modifier: Modifier, onBack: () -> Unit, onAdded: (String) -> Unit) {
-    var title by rememberSaveable { mutableStateOf("") }
-    var carrierName by rememberSaveable { mutableStateOf("") }
-    var carrierCode by rememberSaveable { mutableStateOf("") }
-    var number by rememberSaveable { mutableStateOf("") }
-    var phone by rememberSaveable { mutableStateOf("") }
-    var selectingCarrier by remember { mutableStateOf(false) }
-    Scaffold(modifier = modifier, topBar = { DetailTopBar("添加包裹", onBack) }) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding).testTag("addShipmentList"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            item { FormField("包裹名称（选填）", title, { title = it }) }
-            item {
-                Column {
-                    OutlinedButton(onClick = { selectingCarrier = true }, modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 48.dp)) { Text(carrierName.ifBlank { "选择快递公司" }) }
-                    DropdownMenu(expanded = selectingCarrier, onDismissRequest = { selectingCarrier = false }) {
-                        ManualCarriers.forEach { (name, code) -> DropdownMenuItem(text = { Text(name) }, onClick = { carrierName = name; carrierCode = code; selectingCarrier = false }, modifier = Modifier.sizeIn(minHeight = 48.dp)) }
-                    }
-                }
-            }
-            item { FormField("运单号", number, { number = it }) }
-            item { FormField(if (carrierCode in setOf("shunfeng", "zhongtong")) "收件手机号码（必填）" else "收件手机号码（选填）", phone, { phone = it }) }
-            item { Text("物流查询使用设置中的快递100服务。手机号码会加密保存。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            item {
-                ActionButton("添加包裹", busy["addShipment"] == true, carrierCode.isNotBlank() && number.isNotBlank() && (carrierCode !in setOf("shunfeng", "zhongtong") || phone.isNotBlank())) {
-                    runAction("addShipment") {
-                        val shipment = container.repository.createManualShipment(title.trim(), carrierName, carrierCode, number.trim(), phone.trim().takeIf { it.isNotEmpty() }?.let(container.credentials::encrypt))
-                        container.syncCoordinator.updateSchedules()
-                        onAdded(shipment.id)
-                        container.syncCoordinator.refreshShipment(shipment.id)
-                    }
                 }
             }
         }

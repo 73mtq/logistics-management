@@ -17,10 +17,22 @@ class LogisticsApplication : Application() {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE) && WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
             container.platforms.prepareProfiles()
         }
-        container.notifications.createChannels()
         applicationScope.launch {
             container.repository.recoverInterruptedSyncs()
+            for (account in container.repository.getAccounts().filter { it.platform == com.logisticsmanagement.app.model.Platform.DOUYIN }) {
+                try {
+                    val store = container.syncCoordinator.nativeProgressStore
+                    if (store.read(account)?.running == true) {
+                        val value = checkNotNull(store.recover(account))
+                        container.repository.setSyncState(account.id, com.logisticsmanagement.app.model.AccountState.PARTIAL, value.message())
+                    }
+                } catch (failure: com.logisticsmanagement.app.model.AppFailure) {
+                    container.repository.setSyncState(account.id, com.logisticsmanagement.app.model.AccountState.PARTIAL, failure.message)
+                }
+            }
+            container.platforms.cleanupRemovedProfiles()
             container.syncCoordinator.updateSchedules()
+            container.ready.complete(Unit)
         }
     }
 }

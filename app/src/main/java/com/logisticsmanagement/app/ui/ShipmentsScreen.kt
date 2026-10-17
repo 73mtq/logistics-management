@@ -12,13 +12,12 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -55,7 +54,7 @@ private val StatusOrder = listOf(ParcelStatus.PICKUP, ParcelStatus.EXCEPTION, Pa
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>, unshippedOrders: List<Order>, accounts: List<Account>, storedAccounts: List<Account>, sources: List<SourceRef>, busy: Map<String, Boolean>, runAction: RunAction, copy: (String, String) -> Unit, modifier: Modifier, onOpen: (String) -> Unit, onAdd: () -> Unit) {
+internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>, unshippedOrders: List<Order>, accounts: List<Account>, storedAccounts: List<Account>, sources: List<SourceRef>, busy: Map<String, Boolean>, runAction: RunAction, copy: (String, String) -> Unit, modifier: Modifier, onOpen: (String) -> Unit, nativeUnlinkedOrders: List<Order> = emptyList()) {
     var query by rememberSaveable { mutableStateOf("") }
     var statusFilter by rememberSaveable { mutableStateOf("全部") }
     var platformFilter by rememberSaveable { mutableStateOf<String?>(null) }
@@ -87,6 +86,13 @@ internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>,
             (accountFilter == null || order.accountId == accountFilter) &&
             (query.isBlank() || listOf(order.title, order.remoteId, account?.label.orEmpty(), account?.platform?.displayName.orEmpty()).any { it.contains(query.trim(), ignoreCase = true) })
     }.sortedByDescending { it.createdAt }
+    val nativeResults = nativeUnlinkedOrders.filter { order ->
+        val account = accountsById[order.accountId]
+        !archived && (platformFilter == null || platformFilter == Platform.DOUYIN.name) &&
+            (accountFilter == null || order.accountId == accountFilter) &&
+            (statusFilter == "全部" || statusFilter == order.status.displayName || statusFilter == "在途" && order.status != ParcelStatus.SIGNED) &&
+            (query.isBlank() || listOf(order.title, order.remoteId, account?.label.orEmpty()).any { it.contains(query.trim(), true) })
+    }
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -100,24 +106,19 @@ internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>,
                 }
             })
         },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(onClick = onAdd,
-                modifier = Modifier.testTag("addShipmentAction").semantics { contentDescription = "添加包裹" },
-                icon = { Icon(Icons.Outlined.Add, null) }, text = { Text("添加包裹") })
-        },
     ) { padding ->
         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding).testTag("shipmentsList"), contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { FormField("搜索名称、运单号、备注或账号", query, { query = it }, modifier = Modifier.testTag("shipmentsSearch")) }
             item {
-                Text("待取件 ${shipments.count { !it.archived && it.status == ParcelStatus.PICKUP }} 件 · 在途 ${shipments.count { !it.archived && it.status != ParcelStatus.SIGNED && it.status != ParcelStatus.PICKUP } + unshippedOrders.size} 件",
+                Text("待取件 ${shipments.count { !it.archived && it.status == ParcelStatus.PICKUP }} 件 · 在途 ${shipments.count { !it.archived && it.status != ParcelStatus.SIGNED && it.status != ParcelStatus.PICKUP } + unshippedOrders.size + nativeUnlinkedOrders.count { it.status != ParcelStatus.SIGNED && it.status != ParcelStatus.PICKUP }} 件",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyRow(modifier = Modifier.testTag("statusFilters"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(listOf("全部", "待取件", "物流异常", "在途", "待发货", "运输中", "派送中", "已签收", "状态未提供")) { status ->
-                        FilterChip(selected = statusFilter == status, onClick = { statusFilter = status }, label = { Text(status) }, modifier = Modifier.sizeIn(minHeight = 48.dp))
+                        FilterChip(selected = statusFilter == status, onClick = { statusFilter = status }, label = { Text(status) }, modifier = Modifier.sizeIn(minHeight = 48.dp).testTag("statusFilter_$status"))
                     }
-                    item { FilterChip(selected = archived, onClick = { archived = !archived }, label = { Text("已归档") }, modifier = Modifier.sizeIn(minHeight = 48.dp)) }
+                    item { FilterChip(selected = archived, onClick = { archived = !archived }, label = { Text("已归档") }, modifier = Modifier.sizeIn(minHeight = 48.dp).testTag("archivedFilter")) }
                 }
             }
             if (busy["syncAll"] == true || accounts.any { it.state == AccountState.SYNCING }) {
@@ -142,10 +143,10 @@ internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>,
                     }
                 }
             }
-            if (results.isEmpty() && orderResults.isEmpty()) {
+            if (results.isEmpty() && orderResults.isEmpty() && nativeResults.isEmpty()) {
                 item {
                     EmptyState(if (query.isNotBlank()) "没有找到包含「${query}」的包裹" else "当前条件下没有包裹",
-                        if (accounts.isEmpty() && shipments.isEmpty() && unshippedOrders.isEmpty()) "可以在设置中添加平台账号，也可以手动添加运单。" else "更新包裹或调整筛选条件后查看。") {
+                        if (accounts.isEmpty() && shipments.isEmpty() && unshippedOrders.isEmpty()) "在设置中添加平台账号后，可以查看订单和物流记录。" else "更新包裹或调整筛选条件后查看。") {
                         if (query.isNotBlank() || platformFilter != null || accountFilter != null || archived || statusFilter != "全部") {
                             TextButton(onClick = { query = ""; platformFilter = null; accountFilter = null; archived = false; statusFilter = "全部" }) { Text("清除筛选") }
                         }
@@ -153,6 +154,14 @@ internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>,
                 }
             }
             StatusOrder.forEach { status ->
+                val nativeGroup = nativeResults.filter { it.status == status }
+                if (nativeGroup.isNotEmpty()) {
+                    item(key = "native_orders_${status.name}") { SectionTitle("${status.displayName}订单 · ${nativeGroup.size} 笔") }
+                    items(nativeGroup, key = { "order_${it.id}" }) { order ->
+                        val account = accountsById[order.accountId]
+                        UnshippedOrderCard(order, account) { container.platforms.openOrder(context, checkNotNull(account), order) }
+                    }
+                }
                 if (status == ParcelStatus.WAITING_SHIPMENT && orderResults.isNotEmpty()) {
                     item { SectionTitle("待发货订单 · ${orderResults.size} 件") }
                     items(orderResults, key = { "order_${it.id}" }) { order ->
@@ -172,7 +181,9 @@ internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>,
         }
     }
     if (showFilters) {
-        ModalBottomSheet(onDismissRequest = { showFilters = false }) {
+        ModalBottomSheet(onDismissRequest = { showFilters = false }, dragHandle = {
+            BottomSheetDefaults.DragHandle(modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp))
+        }) {
             LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { SectionTitle("选择平台") }
                 items(Platform.entries) { platform ->
@@ -192,13 +203,13 @@ internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>,
 
 @Composable
 private fun UnshippedOrderCard(order: Order, account: Account?, onOpen: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth().testTag("order_${order.id}")) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(order.title, style = MaterialTheme.typography.titleMedium)
-            Text("待发货 · 平台尚未提供运单", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            Text(if (account?.platform == Platform.DOUYIN) "${order.status.displayName} · 物流待采集" else "待发货 · 平台尚未提供运单", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
             Text(account?.let { "${it.platform.displayName} · ${it.label}" } ?: "来源账号记录未提供", style = MaterialTheme.typography.bodyMedium)
             order.createdAt?.let { Text("下单时间 ${formatTimestamp(it)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            if (order.orderUrl.isNotBlank()) {
+            if (order.orderUrl.isNotBlank() || account?.platform == Platform.DOUYIN && account.captureMode == com.logisticsmanagement.app.model.CaptureMode.APP_PAGE) {
                 TextButton(onClick = onOpen, enabled = account != null && !account.deleted, modifier = Modifier.sizeIn(minHeight = 48.dp)) {
                     Text(if (account?.deleted == true) "来源账号已经移除" else "查看平台订单")
                 }
@@ -209,7 +220,7 @@ private fun UnshippedOrderCard(order: Order, account: Account?, onOpen: () -> Un
 
 @Composable
 internal fun ShipmentCard(shipment: Shipment, sources: List<SourceRef>, latestText: String?, onOpen: () -> Unit, copy: (String, String) -> Unit) {
-    Card(onClick = onOpen, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+    Card(onClick = onOpen, modifier = Modifier.fillMaxWidth().testTag("shipment_${shipment.id}"), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(shipment.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -217,7 +228,7 @@ internal fun ShipmentCard(shipment: Shipment, sources: List<SourceRef>, latestTe
             }
             Text("${shipment.carrier.ifBlank { "快递公司未提供" }} · ${shipment.trackingNumber?.let { "尾号 ${it.takeLast(4)}" } ?: "运单号未提供"}",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (sources.isNotEmpty()) Text(sources.distinctBy { it.accountId }.joinToString(" · ") { if (it.platform == Platform.MANUAL) "手动添加" else "${it.platform.displayName} ${it.accountLabel}" },
+            if (sources.isNotEmpty()) Text(sources.distinctBy { it.accountId }.joinToString(" · ") { "${it.platform.displayName} ${it.accountLabel}" },
                 style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (shipment.status == ParcelStatus.PICKUP) {
                 shipment.pickupCode?.takeIf { it.isNotBlank() }?.let { code ->
@@ -239,6 +250,7 @@ internal fun accountStateLabel(state: AccountState): String = when (state) {
     AccountState.READY -> "可以更新"
     AccountState.SYNCING -> "正在更新"
     AccountState.NEEDS_VERIFICATION -> "需要完成验证"
+    AccountState.PARTIAL -> "部分包裹等待更新"
     AccountState.FAILED -> "更新失败"
     AccountState.REMOVED -> "已经移除"
 }

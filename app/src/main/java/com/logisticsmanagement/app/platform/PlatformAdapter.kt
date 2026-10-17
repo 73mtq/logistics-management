@@ -1,7 +1,7 @@
 package com.logisticsmanagement.app.platform
 
 import com.logisticsmanagement.app.model.Account
-import com.logisticsmanagement.app.model.ImportedOrder
+import com.logisticsmanagement.app.model.OrderBatch
 import com.logisticsmanagement.app.model.ImportedShipment
 import com.logisticsmanagement.app.model.Platform
 import com.logisticsmanagement.app.model.SourceRef
@@ -11,6 +11,11 @@ interface PlatformAdapter {
     val loginUrl: String
     val orderListUrl: String
     val allowedOrigins: Set<String>
-    suspend fun sync(account: Account, onBatch: suspend (List<ImportedOrder>) -> Unit)
+    suspend fun sync(account: Account, onBatch: suspend (OrderBatch) -> Unit)
+    suspend fun openTrackingSession(account: Account): TrackingSession
     suspend fun tracking(account: Account, source: SourceRef): ImportedShipment
+}
+
+interface TrackingSession : AutoCloseable {
+    suspend fun query(source: SourceRef): ImportedShipment
 }

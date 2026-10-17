@@ -35,7 +35,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlin.coroutines.resume
 
 @Serializable
-internal data class CapturedResponse(val kind: String, val url: String, val body: String = "", val status: Int = 0)
+internal data class CapturedResponse(val kind: String, val url: String, val body: String = "", val status: Int = 0,
+    val requestType: String = "", val requestPage: Int = 0, val pageUrl: String = "", val characters: Int? = null)
 
 internal class AccountProfiles(context: Context) {
     private val preferences = context.getSharedPreferences("webview_profiles", Context.MODE_PRIVATE)
@@ -79,13 +80,20 @@ internal class AccountProfiles(context: Context) {
         if (active[account.profileName]?.isEmpty() == true) active.remove(account.profileName)
     }
 
-    suspend fun delete(account: Account) = withContext(Dispatchers.Main.immediate) {
+    internal fun activeSessionCount(account: Account): Int {
+        checkMainThread()
+        return active[account.profileName]?.size ?: 0
+    }
+
+    suspend fun delete(account: Account) = deleteProfile(account.profileName)
+
+    suspend fun deleteProfile(name: String) = withContext(Dispatchers.Main.immediate) {
         prepare()
-        val name = account.profileName
+        require(name.startsWith("account_") && name != Profile.DEFAULT_PROFILE_NAME)
         val pending = preferences.getStringSet("pending_deletions", emptySet()).orEmpty().toMutableSet()
         pending.add(name)
         check(preferences.edit().putStringSet("pending_deletions", pending).commit())
-        active[name]?.toList()?.forEach { it.close(AppFailure("账号已移除", FailureKind.NEEDS_LOGIN)) }
+        active.values.flatten().filter { it.account.profileName == name }.toList().forEach { it.close(AppFailure("账号已移除", FailureKind.NEEDS_LOGIN)) }
         if (name in loaded) {
             requireFeature(WebViewFeature.DELETE_BROWSING_DATA)
             val profile = ProfileStore.getInstance().getProfile(name)
@@ -145,13 +153,7 @@ internal fun hasPlatformLoginSession(profile: Profile, platform: Platform): Bool
             !it["PDDAccessToken"].isNullOrBlank() &&
                 listOf("pdduid", "PASS_ID", "pdd_user_id", "pdd_user_uin").any { key -> !it[key].isNullOrBlank() }
         }
-        Platform.XIAOMI -> {
-            val serviceCookies = cookieValues(profile, "https://api.assistant.miui.com/")
-            val accountCookies = cookieValues(profile, "https://account.xiaomi.com/")
-            (!serviceCookies["assistant_serviceToken"].isNullOrBlank() || !serviceCookies["serviceToken"].isNullOrBlank()) &&
-                !(accountCookies["cUserId"] ?: serviceCookies["cUserId"]).isNullOrBlank() && !accountCookies["userId"].isNullOrBlank()
-        }
-        Platform.DOUYIN, Platform.MANUAL -> false
+        Platform.DOUYIN -> false
     }
 }
 
@@ -173,6 +175,7 @@ internal class PlatformWebView(
     val view: WebView
     private val script: ScriptHandler
     private var closed = false
+    val isClosed: Boolean get() = closed
     var currentUrl: String = ""
         private set
     var onPage: ((String) -> Unit)? = null
@@ -227,19 +230,29 @@ internal class PlatformWebView(
                 close(AppFailure("平台消息结构尚未支持", FailureKind.UNSUPPORTED_RESPONSE))
                 return@addWebMessageListener
             }
+            if (capture.pageUrl.isNotBlank() && capture.pageUrl.substringBefore('#') != view.url?.substringBefore('#')) return@addWebMessageListener
+            if (capture.kind == "capacity") {
+                messages.trySend(capture)
+                close(AppFailure("平台响应超过采集容量（${capture.characters} 字符），可导出响应结构诊断", FailureKind.UNSUPPORTED_RESPONSE))
+                return@addWebMessageListener
+            }
             if (capture.kind == "challenge" && !interactive) {
+                messages.trySend(capture)
                 close(AppFailure("${account.platform.displayName}账号「${account.label}」需要完成验证", FailureKind.NEEDS_VERIFICATION))
                 return@addWebMessageListener
             }
             if (capture.kind == "error") {
+                messages.trySend(capture)
                 close(AppFailure(capture.body, FailureKind.UNSUPPORTED_RESPONSE))
                 return@addWebMessageListener
             }
             if (capture.kind == "network") {
+                messages.trySend(capture)
                 close(AppFailure("${account.platform.displayName}接口网络请求失败，请检查网络连接", FailureKind.NETWORK))
                 return@addWebMessageListener
             }
             if (capture.kind == "response" && capture.status >= 400) {
+                messages.trySend(capture)
                 val kind = if (capture.status == 401) FailureKind.NEEDS_LOGIN else FailureKind.SERVICE_ERROR
                 close(AppFailure("${account.platform.displayName}接口返回 HTTP ${capture.status}", kind))
                 return@addWebMessageListener
@@ -249,13 +262,21 @@ internal class PlatformWebView(
         script = WebViewCompat.addDocumentStartJavaScript(view, CaptureScripts.install(account.platform), adapter.allowedOrigins)
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                return !allowsOrigin(request.url, adapter.allowedOrigins)
+                val allowed = allowsOrigin(request.url, adapter.allowedOrigins)
+                if (request.isForMainFrame) {
+                    android.util.Log.i("ParcelRedirect", "shouldOverride mainFrame=${request.isForMainFrame} allowed=$allowed url=${request.url.buildUpon().clearQuery().fragment(null).build()}")
+                    messages.trySend(CapturedResponse("redirect", request.url.toString(), if (allowed) "allowed-navigation" else "blocked-navigation"))
+                }
+                return !allowed
             }
             override fun onPageFinished(view: WebView, url: String) {
                 if (closed) return
                 currentUrl = url
+                messages.trySend(CapturedResponse("pageFinished", url))
                 val uri = Uri.parse(url)
                 if (!allowsOrigin(uri, adapter.allowedOrigins)) {
+                    android.util.Log.i("ParcelRedirect", "onPageFinished unauthorized url=${uri.buildUpon().clearQuery().fragment(null).build()}")
+                    messages.trySend(CapturedResponse("redirect", url, "finished-unauthorized"))
                     close(AppFailure("平台跳转到尚未授权的网页来源", FailureKind.NEEDS_VERIFICATION))
                     return
                 }
@@ -289,6 +310,9 @@ internal class PlatformWebView(
     fun load(url: String) {
         checkMainThread()
         check(!closed)
+        view.stopLoading()
+        while (messages.tryReceive().isSuccess) Unit
+        currentUrl = ""
         if (!allowsOrigin(Uri.parse(url), adapter.allowedOrigins)) throw AppFailure("网页来源尚未授权", FailureKind.CONFIGURATION)
         view.loadUrl(url)
     }

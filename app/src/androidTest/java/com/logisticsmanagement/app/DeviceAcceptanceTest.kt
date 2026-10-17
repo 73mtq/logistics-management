@@ -10,6 +10,9 @@ import android.widget.Button
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
@@ -33,7 +36,6 @@ import androidx.core.view.doOnLayout
 import com.logisticsmanagement.app.data.CredentialStore
 import com.logisticsmanagement.app.model.Platform
 import com.logisticsmanagement.app.platform.PlatformBrowserActivity
-import com.logisticsmanagement.app.platform.XiaomiAccountActivity
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Before
@@ -44,6 +46,12 @@ import org.junit.rules.ExternalResource
 import org.junit.rules.RuleChain
 import org.junit.rules.TestRule
 import kotlinx.coroutines.runBlocking
+import com.logisticsmanagement.app.sync.SyncEvidence
+import com.logisticsmanagement.app.sync.SyncStage
+import com.logisticsmanagement.app.model.AccountState
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.File
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.concurrent.CountDownLatch
@@ -69,17 +77,45 @@ class DeviceAcceptanceTest {
     }
 
     @Test fun navigationAndAccountsUseRealApplication() {
-        listOf("包裹", "日历", "助手", "设置").forEach { compose.onNode(hasText(it) and hasClickAction()).assertIsDisplayed() }
+        listOf("包裹", "日历", "设置").forEach { compose.onNode(hasText(it) and hasClickAction()).assertIsDisplayed() }
         compose.onNode(hasText("设置") and hasClickAction()).performClick()
-        compose.onNodeWithTag("settingsList").performScrollToNode(hasText("添加小米智能助理账号") and hasClickAction())
-        compose.onNode(hasText("添加小米智能助理账号") and hasClickAction()).assertIsDisplayed()
+        compose.onNodeWithTag("settingsList").performScrollToNode(hasText("添加抖音账号") and hasClickAction())
+        compose.onNode(hasText("添加抖音账号") and hasClickAction()).assertIsDisplayed()
         compose.onNode(hasText("日历") and hasClickAction()).performClick()
         compose.onNodeWithText("返回今天").assertIsDisplayed()
-        compose.onNode(hasText("助手") and hasClickAction()).performClick()
         compose.onNode(hasText("包裹") and hasClickAction()).performClick()
     }
 
-    @Test fun searchAndAddScreenReturnUseRealApplication() {
+    @Test fun recoveryProgressMatchesSavedAccount() {
+        val container = (compose.activity.application as LogisticsApplication).container
+        val arguments = InstrumentationRegistry.getArguments()
+        val id = checkNotNull(arguments.getString("accountId"))
+        val directory = File(compose.activity.filesDir, "sync-recovery-evidence/${checkNotNull(arguments.getString("runName"))}")
+        check(directory.mkdirs())
+        var captures = 0
+        runBlocking {
+            container.ready.await()
+            container.syncCoordinator.syncAccountWithEvidence(id, timeoutMillis = 15_000,
+                evidence = SyncEvidence(onCapture = { _, capture ->
+                    File(directory, "capture-${captures++}.json").writeText(Json.encodeToString(capture))
+                }))
+        }
+        val progress = checkNotNull(container.syncCoordinator.progress.value[id])
+        val account = runBlocking { checkNotNull(container.repository.getAccount(id)) }
+        assertEquals(AccountState.PARTIAL, account.state)
+        assertEquals(SyncStage.PARTIAL, progress.stage)
+        assertEquals(account.error, progress.message)
+        assertEquals(runBlocking { container.repository.pendingTracking(id).size }, progress.pending)
+        assertTrue(captures > 0)
+        compose.onNode(hasText("设置") and hasClickAction()).performClick()
+        val card = hasTestTag("account_$id")
+        compose.onNodeWithTag("settingsList").performScrollToNode(card)
+        compose.onAllNodes(hasText(progress.message) and hasAnyAncestor(card)).assertCountEquals(2)
+        compose.onNode(hasText("部分包裹等待更新") and hasAnyAncestor(card)).assertIsDisplayed()
+        File(directory, "result.json").writeText("{\"progressMatchesDatabase\":true,\"pending\":${progress.pending},\"captures\":$captures}")
+    }
+
+    @Test fun searchAndFiltersReturnUseRealApplication() {
         val searchText = "验收搜索${System.nanoTime()}"
         compose.onNodeWithTag("shipmentsSearch").performClick().performTextInput(searchText)
         compose.onNodeWithTag("shipmentsSearch").assertTextContains(searchText)
@@ -89,9 +125,9 @@ class DeviceAcceptanceTest {
             compose.runOnIdle { keyboardVisible = ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
             keyboardVisible
         }
-        compose.onNodeWithTag("addShipmentAction").assertIsDisplayed().assertHasClickAction().performClick()
-        compose.onNodeWithText("选择快递公司").assertIsDisplayed()
-        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithContentDescription("筛选平台和账号").assertIsDisplayed().assertHasClickAction().performClick()
+        compose.onNodeWithText("选择平台").assertIsDisplayed()
+        compose.onNodeWithText("查看包裹").performClick()
         compose.onNodeWithTag("navigation_shipments").assertIsDisplayed()
         compose.onNodeWithTag("shipmentsSearch").assertIsDisplayed()
     }
@@ -105,6 +141,30 @@ class DeviceAcceptanceTest {
         compose.onNodeWithContentDescription("上一周").assertIsDisplayed()
         compose.activity.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithTag("shipmentsSearch").assertIsDisplayed()
+    }
+
+    @Test fun signedShipmentListAndDetailUseActualRecord() {
+        val arguments = InstrumentationRegistry.getArguments()
+        val accountId = checkNotNull(arguments.getString("accountId"))
+        val remoteId = checkNotNull(arguments.getString("remoteOrderId"))
+        val container = (compose.activity.application as LogisticsApplication).container
+        val shipment = runBlocking {
+            container.ready.await()
+            container.repository.getShipments().single { shipment ->
+                container.repository.getSources(shipment.id).any { it.accountId == accountId && it.remoteOrderId == remoteId }
+            }
+        }
+        assertEquals(com.logisticsmanagement.app.model.ParcelStatus.SIGNED, shipment.status)
+        val number = checkNotNull(shipment.trackingNumber)
+        compose.onNodeWithTag("shipmentsSearch").performClick().performTextClearance()
+        compose.onNodeWithTag("shipmentsSearch").performTextInput(number)
+        val card = hasText(shipment.title) and hasText("已签收") and hasClickAction()
+        compose.onNodeWithTag("shipmentsList").performScrollToNode(card)
+        compose.onNode(card).assertIsDisplayed().performClick()
+        compose.onNodeWithTag("shipmentDetailList").assertIsDisplayed()
+        compose.onNodeWithText("已签收").assertIsDisplayed()
+        compose.onNodeWithContentDescription("返回").performClick()
+        compose.onNodeWithTag("shipmentsSearch").performTextClearance()
     }
 
     @Test fun importedShipmentDetailsAndCopyUseActualRecord() {
@@ -143,7 +203,7 @@ class DeviceAcceptanceTest {
 
     @Test fun nativePlatformToolbarUsesAvailableWindowBounds() {
         val container = (compose.activity.application as LogisticsApplication).container
-        val account = runBlocking { container.repository.getAccounts().firstOrNull { it.platform != Platform.MANUAL } }
+        val account = runBlocking { container.repository.getAccounts().firstOrNull { it.captureMode == com.logisticsmanagement.app.model.CaptureMode.WEB } }
         assumeTrue("需要已经创建的真实平台账号", account != null)
         val intent = Intent(compose.activity, PlatformBrowserActivity::class.java)
             .putExtra("accountId", checkNotNull(account).id).putExtra("mode", "login")
@@ -157,20 +217,6 @@ class DeviceAcceptanceTest {
         }
     }
 
-    @Test fun nativeXiaomiConfigurationUsesAvailableWindowBounds() {
-        val container = (compose.activity.application as LogisticsApplication).container
-        val account = runBlocking { container.repository.getAccounts().firstOrNull { it.platform == Platform.XIAOMI } }
-        assumeTrue("需要已经创建的真实小米账号", account != null)
-        val intent = Intent(compose.activity, XiaomiAccountActivity::class.java).putExtra("accountId", checkNotNull(account).id)
-        ActivityScenario.launch<XiaomiAccountActivity>(intent).use { scenario ->
-            val ready = CountDownLatch(1)
-            scenario.onActivity { activity -> activity.window.decorView.doOnLayout { ready.countDown() } }
-            assertTrue("小米账号配置需要完成窗口布局", ready.await(10, TimeUnit.SECONDS))
-            scenario.onActivity { activity ->
-                assertVisibleButtonsUseAvailableBounds(activity.window.decorView, setOf("登录小米账号", "保存设备标识", "读取设备标识", "发送短信验证码", "验证并绑定手机号", "返回"))
-            }
-        }
-    }
 
     @Test fun deviceSupportsRequiredWebViewCapabilities() {
         listOf(WebViewFeature.MULTI_PROFILE, WebViewFeature.DOCUMENT_START_SCRIPT, WebViewFeature.WEB_MESSAGE_LISTENER, WebViewFeature.DELETE_BROWSING_DATA).forEach {

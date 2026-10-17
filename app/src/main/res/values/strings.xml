@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">快递助手</string>
+    <string name="douyin_accessibility_label">抖音订单采集</string>
+    <string name="douyin_accessibility_description">在你开始采集后读取抖音官方 App 的商城订单和物流页面，结束采集后停止读取。</string>
 </resources>
