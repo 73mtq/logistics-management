@@ -11,3 +11,5 @@ work/
 captures/
 .idea/
 *.iml
+# hindsight MCP registration (machine-specific)
+.trae/mcp.json
