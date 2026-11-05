@@ -1,5 +1,6 @@
 package com.logisticsmanagement.app.platform
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -7,6 +8,7 @@ import com.logisticsmanagement.app.data.CredentialStore
 import com.logisticsmanagement.app.data.LogisticsRepository
 import com.logisticsmanagement.app.model.Account
 import com.logisticsmanagement.app.model.AppFailure
+import com.logisticsmanagement.app.model.CaptureMode
 import com.logisticsmanagement.app.model.FailureKind
 import com.logisticsmanagement.app.model.Platform
 import com.logisticsmanagement.app.model.Order
@@ -72,10 +74,8 @@ class PlatformRegistry(
     }
 
     fun openLogin(context: Context, account: Account) {
-        val intent = Intent(context, PlatformBrowserActivity::class.java)
-            .putExtra("accountId", account.id).putExtra("mode", "login")
-        if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+        context.startPlatformIntent(Intent(context, PlatformBrowserActivity::class.java)
+            .putExtra("accountId", account.id).putExtra("mode", "login"))
     }
 
     fun openSource(context: Context, account: Account, source: SourceRef) {
@@ -84,28 +84,33 @@ class PlatformRegistry(
 
     internal fun sourceIntent(context: Context, account: Account, source: SourceRef): Intent {
         require(source.accountId == account.id && source.platform == account.platform)
-        val intent = if (account.platform == Platform.DOUYIN && account.captureMode == com.logisticsmanagement.app.model.CaptureMode.APP_PAGE) {
+        val intent = if (usesNativeDouyin(account)) {
             Intent(context, DouyinCaptureActivity::class.java)
                 .putExtra("accountId", account.id).putExtra("remoteOrderId", source.remoteOrderId)
         } else Intent(context, PlatformBrowserActivity::class.java)
             .putExtra("accountId", account.id).putExtra("sourceId", source.id)
             .putExtra("shipmentId", source.shipmentId).putExtra("mode", "source")
-        if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return intent
     }
 
     fun openOrder(context: Context, account: Account, order: Order) {
         require(order.accountId == account.id)
-        if (account.platform == Platform.DOUYIN && account.captureMode == com.logisticsmanagement.app.model.CaptureMode.APP_PAGE) {
-            val native = Intent(context, DouyinCaptureActivity::class.java).putExtra("accountId", account.id).putExtra("remoteOrderId", order.remoteId)
-            if (context !is android.app.Activity) native.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(native)
+        if (usesNativeDouyin(account)) {
+            context.startPlatformIntent(Intent(context, DouyinCaptureActivity::class.java)
+                .putExtra("accountId", account.id).putExtra("remoteOrderId", order.remoteId))
             return
         }
-        val intent = Intent(context, PlatformBrowserActivity::class.java)
-            .putExtra("accountId", account.id).putExtra("orderId", order.id).putExtra("mode", "order")
-        if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+        context.startPlatformIntent(Intent(context, PlatformBrowserActivity::class.java)
+            .putExtra("accountId", account.id).putExtra("orderId", order.id).putExtra("mode", "order"))
+    }
+
+    private fun usesNativeDouyin(account: Account): Boolean =
+        account.platform == Platform.DOUYIN && account.captureMode == CaptureMode.APP_PAGE
+
+    private fun Context.startPlatformIntent(intent: Intent) {
+        if (this !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(intent)
     }
 
     internal suspend fun rememberCapture(account: Account, capture: CapturedResponse) {

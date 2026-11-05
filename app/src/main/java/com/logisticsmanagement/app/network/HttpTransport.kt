@@ -27,8 +27,8 @@ internal suspend fun OkHttpClient.readResponse(request: Request): HttpPayload =
         val call = newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
-            override fun onFailure(call: Call, error: IOException) {
-                continuation.resumeWithException(error)
+            override fun onFailure(call: Call, e: IOException) {
+                continuation.resumeWithException(e)
             }
 
             override fun onResponse(call: Call, response: Response) {

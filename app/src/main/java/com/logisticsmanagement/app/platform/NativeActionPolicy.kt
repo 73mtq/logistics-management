@@ -1,5 +1,9 @@
 package com.logisticsmanagement.app.platform
 
+import android.view.accessibility.AccessibilityNodeInfo
+
+private const val ACTION_CLICK = AccessibilityNodeInfo.ACTION_CLICK
+
 internal enum class NativeActionPurpose { ACCOUNT, HOME, MALL, ORDERS, ALL, ORDER_DETAIL, ORDER_INFORMATION, LOGISTICS, LOGISTICS_INFORMATION, LOGISTICS_BODY, SCROLL, UNKNOWN }
 
 internal object NativeActionPolicy {
@@ -47,13 +51,13 @@ internal object NativeActionPolicy {
             node.bounds[1] >= header.bounds[3] || header.bounds[1] >= node.bounds[3]) return null
         val scope = DouyinNativeOrders.informationRoot(page)?.takeIf { descendant(node.path, it) } ?: return null
         val area = page.nodes.singleOrNull { it.path == scope } ?: return null
-        val clickable = page.nodes.filter { it.visible && it.enabled && 16 in it.actions && descendant(node.path, it.path) }
+        val clickable = page.nodes.filter { it.visible && it.enabled && ACTION_CLICK in it.actions && descendant(node.path, it.path) }
             .maxByOrNull { it.path.size }
         return if (clickable != null && descendant(scope, clickable.path) && clickable.bounds == area.bounds) clickable.path else scope
     }
 
     private fun controlScope(page: NativePage, anchor: NativeNode): List<Int>? {
-        val clickable = page.nodes.filter { it.visible && it.enabled && 16 in it.actions && descendant(anchor.path, it.path) }
+        val clickable = page.nodes.filter { it.visible && it.enabled && ACTION_CLICK in it.actions && descendant(anchor.path, it.path) }
             .maxByOrNull { it.path.size } ?: return anchor.path.takeIf { it.isNotEmpty() }
         val root = page.nodes.singleOrNull { it.path.isEmpty() } ?: return null
         if (clickable.bounds.size != 4 || root.bounds.size != 4) return null

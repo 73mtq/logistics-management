@@ -7,6 +7,7 @@ import androidx.work.*
 import com.logisticsmanagement.app.data.*
 import com.logisticsmanagement.app.model.*
 import com.logisticsmanagement.app.platform.PlatformRegistry
+import com.logisticsmanagement.app.platform.PlatformAdapter
 import com.logisticsmanagement.app.platform.BrowserAdapter
 import com.logisticsmanagement.app.platform.PddAdapter
 import com.logisticsmanagement.app.platform.TaobaoAdapter
@@ -138,16 +139,12 @@ class SyncCoordinator(
         val lock = locks.computeIfAbsent(id) { Mutex() }
         if (!lock.tryLock()) return@coroutineScope
         try {
-            val account = repository.getAccount(id) ?: throw AppFailure("账号不存在", FailureKind.CONFIGURATION)
-            if (!account.enabled || account.deleted) throw AppFailure("账号已停用", FailureKind.CONFIGURATION)
-            if (automatic && (account.captureMode != CaptureMode.WEB || account.lastAttemptAt?.let { System.currentTimeMillis() - it < AUTO_INTERVAL } == true)) return@coroutineScope
+            val account = syncableAccount(id, automatic) ?: return@coroutineScope
             val resumedIds = repository.pendingTracking(id).map { it.sourceId }.toSet()
             val job = coroutineContext.job
             activeJobs[id] = job
             var totals = IngestResult()
-            var updated = 0
-            var total = 0
-            val failures = mutableListOf<TrackingFailure>()
+            val tracking = TrackingRun()
             val deadline = SystemClock.elapsedRealtime() + timeoutMillis
             try {
                 withContext(NonCancellable) {
@@ -156,8 +153,7 @@ class SyncCoordinator(
                 }
                 report(SyncProgress(id, SyncStage.IMPORTING, message = "正在读取订单", pending = resumedIds.size))
                 val completed = withTimeoutOrNull(timeoutMillis) {
-                    val adapter = platforms.adapter(account.platform)
-                    val onBatch: suspend (OrderBatch) -> Unit = { batch ->
+                    val adapter = readOrders(account, evidence) { batch ->
                         withContext(NonCancellable) { totals += repository.ingest(account, batch) }
                         report(SyncProgress(id, SyncStage.IMPORTING, totals.inserted + totals.updated,
                             message = "${totals.description}，正在读取后续页面", result = totals,
@@ -165,70 +161,17 @@ class SyncCoordinator(
                         evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.BATCH_SAVED))
                         mutableEvents.emit(SyncEvent.Data(id, batch.orders))
                     }
-                    when (adapter) {
-                        is PddAdapter -> adapter.syncWithEvidence(account, { evidence.onCapture(null, it) }, onBatch)
-                        is BrowserAdapter -> adapter.sync(account, { evidence.onCapture(null, it) }, onBatch)
-                        is TaobaoAdapter -> adapter.sync(account, { evidence.onCapture(null, it) }, onBatch)
-                        else -> adapter.sync(account, onBatch)
-                    }
                     if (account.captureMode == CaptureMode.APP_PAGE) return@withTimeoutOrNull true
                     val prepared = repository.prepareTracking(id)
                     val queue = prepared.filter { it.sourceId in resumedIds } + prepared.filterNot { it.sourceId in resumedIds }
-                    total = queue.size
-                    if (queue.isNotEmpty()) withContext(Dispatchers.Main.immediate) {
-                        var currentSource: String? = null
-                        val opened = when (adapter) {
-                            is BrowserAdapter -> adapter.openTrackingSession(account) { evidence.onCapture(currentSource, it) }
-                            is TaobaoAdapter -> adapter.openTrackingSession(account) { evidence.onCapture(currentSource, it) }
-                            else -> adapter.openTrackingSession(account)
-                        }
-                        opened.use { session ->
-                            for (item in queue) {
-                                if (deadline - SystemClock.elapsedRealtime() < 46_000) break
-                                val source = repository.getSource(item.sourceId) ?: continue
-                                currentSource = source.id
-                                repository.recordTrackingAttempt(source.id)
-                                report(SyncProgress(id, SyncStage.TRACKING, totals.inserted + totals.updated, updated, total,
-                                    "正在查询物流，已更新 $updated 个，待查询 ${repository.pendingTracking(id).size} 个",
-                                    result = totals, trackingFailures = failures.toList(), pending = repository.pendingTracking(id).size))
-                                evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.TRACKING_STARTED, source.id))
-                                try {
-                                    val incoming = session.query(source)
-                                    withContext(NonCancellable) {
-                                        repository.applyTrackingAndFinish(source, incoming)
-                                        updated++
-                                    }
-                                    evidence.onTrackingSaved(source, incoming)
-                                    evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.TRACKING_SAVED, source.id))
-                                } catch (error: AppFailure) {
-                                    repository.recordTrackingAttempt(source.id, error.message)
-                                    failures.add(TrackingFailure(source.id, checkNotNull(error.message), error.kind))
-                                    evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.TRACKING_FAILED, source.id))
-                                    if (error.kind in setOf(FailureKind.NEEDS_LOGIN, FailureKind.NEEDS_VERIFICATION, FailureKind.UNSUPPORTED_WEBVIEW)) throw error
-                                } catch (error: IOException) {
-                                    val message = "该包裹的网络请求失败"
-                                    repository.recordTrackingAttempt(source.id, message)
-                                    failures.add(TrackingFailure(source.id, message, FailureKind.NETWORK))
-                                }
-                                report(SyncProgress(id, SyncStage.TRACKING, totals.inserted + totals.updated, updated, total,
-                                    "已更新 $updated 个，失败 ${failures.size} 个，待查询 ${repository.pendingTracking(id).size} 个",
-                                    result = totals, trackingFailures = failures.toList(), pending = repository.pendingTracking(id).size))
-                            }
-                        }
-                    }
+                    tracking.total = queue.size
+                    trackShipments(account, adapter, queue, totals, deadline, evidence, tracking)
                     true
                 }
-                val pending = if (account.captureMode == CaptureMode.WEB) repository.pendingTracking(id).size else 0
-                val partial = completed == null || pending > 0
-                val state = if (partial) AccountState.PARTIAL else AccountState.READY
-                val message = (if (completed == null) "本次更新达到执行期限；" else "") +
-                    "${totals.description}；物流成功 $updated 个，失败 ${failures.size} 个，待查询 $pending 个"
-                repository.setSyncState(id, state, if (partial) message else null, if (!partial) System.currentTimeMillis() else null)
-                report(SyncProgress(id, if (partial) SyncStage.PARTIAL else SyncStage.COMPLETED, totals.inserted + totals.updated,
-                    updated, total, message, result = totals, trackingFailures = failures.toList(), pending = pending))
+                finishSync(account, completed == null, totals, tracking)
             } catch (error: AppFailure) {
-                report(SyncProgress(id, SyncStage.FAILED, totals.inserted + totals.updated, updated, total,
-                    checkNotNull(error.message), result = totals, trackingFailures = failures.toList(),
+                report(SyncProgress(id, SyncStage.FAILED, totals.inserted + totals.updated, tracking.updated, tracking.total,
+                    checkNotNull(error.message), result = totals, trackingFailures = tracking.failures.toList(),
                     pending = repository.pendingTracking(id).size))
                 failAccount(account, error)
                 throw error
@@ -239,14 +182,103 @@ class SyncCoordinator(
             } catch (error: CancellationException) {
                 withContext(NonCancellable) {
                     val pending = repository.pendingTracking(id).size
-                    val message = "更新已中断；${totals.description}；物流成功 $updated 个，失败 ${failures.size} 个，待查询 $pending 个"
+                    val message = "更新已中断；${totals.description}；物流成功 ${tracking.updated} 个，失败 ${tracking.failures.size} 个，待查询 $pending 个"
                     repository.setSyncState(id, AccountState.PARTIAL, message)
-                    report(SyncProgress(id, SyncStage.CANCELLED, totals.inserted + totals.updated, updated, total,
-                        message, result = totals, trackingFailures = failures.toList(), pending = pending))
+                    report(SyncProgress(id, SyncStage.CANCELLED, totals.inserted + totals.updated, tracking.updated, tracking.total,
+                        message, result = totals, trackingFailures = tracking.failures.toList(), pending = pending))
                 }
                 throw error
             } finally { activeJobs.remove(id, job) }
         } finally { lock.unlock() }
+    }
+
+    private suspend fun syncableAccount(id: String, automatic: Boolean): Account? {
+        val account = repository.getAccount(id) ?: throw AppFailure("账号不存在", FailureKind.CONFIGURATION)
+        if (!account.enabled || account.deleted) throw AppFailure("账号已停用", FailureKind.CONFIGURATION)
+        if (!automatic) return account
+        val recentlyAttempted = account.lastAttemptAt?.let {
+            System.currentTimeMillis() - it < AUTO_INTERVAL
+        } == true
+        return account.takeIf { it.captureMode == CaptureMode.WEB && !recentlyAttempted }
+    }
+
+    private suspend fun readOrders(account: Account, evidence: SyncEvidence,
+        onBatch: suspend (OrderBatch) -> Unit): PlatformAdapter {
+        val adapter = platforms.adapter(account.platform)
+        when (adapter) {
+            is PddAdapter -> adapter.syncWithEvidence(account, { evidence.onCapture(null, it) }, onBatch)
+            is BrowserAdapter -> adapter.sync(account, { evidence.onCapture(null, it) }, onBatch)
+            is TaobaoAdapter -> adapter.sync(account, { evidence.onCapture(null, it) }, onBatch)
+            else -> adapter.sync(account, onBatch)
+        }
+        return adapter
+    }
+
+    private suspend fun trackShipments(account: Account, adapter: PlatformAdapter, queue: List<TrackingQueue>,
+        imported: IngestResult, deadline: Long, evidence: SyncEvidence, tracking: TrackingRun) {
+        if (queue.isEmpty()) return
+        withContext(Dispatchers.Main.immediate) {
+            var currentSource: String? = null
+            val opened = when (adapter) {
+                is BrowserAdapter -> adapter.openTrackingSession(account) { evidence.onCapture(currentSource, it) }
+                is TaobaoAdapter -> adapter.openTrackingSession(account) { evidence.onCapture(currentSource, it) }
+                else -> adapter.openTrackingSession(account)
+            }
+            opened.use { session ->
+                for (item in queue) {
+                    if (deadline - SystemClock.elapsedRealtime() < 46_000) break
+                    val source = repository.getSource(item.sourceId) ?: continue
+                    currentSource = source.id
+                    repository.recordTrackingAttempt(source.id)
+                    val pending = repository.pendingTracking(account.id).size
+                    report(SyncProgress(account.id, SyncStage.TRACKING, imported.inserted + imported.updated, tracking.updated, tracking.total,
+                        "正在查询物流，已更新 ${tracking.updated} 个，待查询 $pending 个",
+                        result = imported, trackingFailures = tracking.failures.toList(), pending = pending))
+                    evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.TRACKING_STARTED, source.id))
+                    try {
+                        val incoming = session.query(source)
+                        withContext(NonCancellable) {
+                            repository.applyTrackingAndFinish(source, incoming)
+                            tracking.updated++
+                        }
+                        evidence.onTrackingSaved(source, incoming)
+                        evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.TRACKING_SAVED, source.id))
+                    } catch (error: AppFailure) {
+                        repository.recordTrackingAttempt(source.id, error.message)
+                        tracking.failures.add(TrackingFailure(source.id, checkNotNull(error.message), error.kind))
+                        evidence.onCheckpoint(SyncCheckpoint(SyncCheckpointStage.TRACKING_FAILED, source.id))
+                        if (error.kind in setOf(FailureKind.NEEDS_LOGIN, FailureKind.NEEDS_VERIFICATION, FailureKind.UNSUPPORTED_WEBVIEW)) throw error
+                    } catch (error: IOException) {
+                        val message = "该包裹的网络请求失败"
+                        repository.recordTrackingAttempt(source.id, message)
+                        tracking.failures.add(TrackingFailure(source.id, message, FailureKind.NETWORK))
+                    }
+                    val remaining = repository.pendingTracking(account.id).size
+                    report(SyncProgress(account.id, SyncStage.TRACKING, imported.inserted + imported.updated, tracking.updated, tracking.total,
+                        "已更新 ${tracking.updated} 个，失败 ${tracking.failures.size} 个，待查询 $remaining 个",
+                        result = imported, trackingFailures = tracking.failures.toList(), pending = remaining))
+                }
+            }
+        }
+    }
+
+    private suspend fun finishSync(account: Account, timedOut: Boolean, imported: IngestResult, tracking: TrackingRun) {
+        val pending = if (account.captureMode == CaptureMode.WEB) repository.pendingTracking(account.id).size else 0
+        val partial = timedOut || pending > 0
+        val state = if (partial) AccountState.PARTIAL else AccountState.READY
+        val message = (if (timedOut) "本次更新达到执行期限；" else "") +
+            "${imported.description}；物流成功 ${tracking.updated} 个，失败 ${tracking.failures.size} 个，待查询 $pending 个"
+        repository.setSyncState(account.id, state, if (partial) message else null,
+            if (partial) null else System.currentTimeMillis())
+        report(SyncProgress(account.id, if (partial) SyncStage.PARTIAL else SyncStage.COMPLETED,
+            imported.inserted + imported.updated, tracking.updated, tracking.total, message,
+            result = imported, trackingFailures = tracking.failures.toList(), pending = pending))
+    }
+
+    private class TrackingRun {
+        var total = 0
+        var updated = 0
+        val failures = mutableListOf<TrackingFailure>()
     }
 
     private suspend fun failAccount(account: Account, error: AppFailure) {

@@ -3,6 +3,7 @@ package com.logisticsmanagement.app.platform
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -18,6 +19,7 @@ import com.logisticsmanagement.app.model.CaptureMode
 import com.logisticsmanagement.app.model.FailureKind
 import com.logisticsmanagement.app.model.Platform
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class DouyinCaptureActivity : ComponentActivity() {
     private val container get() = (application as LogisticsApplication).container
@@ -32,7 +34,7 @@ class DouyinCaptureActivity : ComponentActivity() {
             text = "开启无障碍权限后读取抖音的商城订单和物流。采集期间单击选择、双击打开；结束采集后恢复正常触摸。首次采集需要核对抖音账号。"
             textSize = 16f
         })
-        status = TextView(this).apply { textSize = 16f; accessibilityLiveRegion = android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        status = TextView(this).apply { textSize = 16f; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         intent.getStringExtra("remoteOrderId")?.let { content.addView(TextView(this).apply { text = "目标订单编号：$it"; textSize = 16f }) }
         content.addView(status)
         fun action(label: String, block: () -> Unit) {
@@ -45,7 +47,7 @@ class DouyinCaptureActivity : ComponentActivity() {
                 val intent = packageManager.getLaunchIntentForPackage(DouyinCaptureController.PACKAGE)
                     ?: throw AppFailure("请安装抖音官方 App", FailureKind.CONFIGURATION)
                 require(selected.captureMode == CaptureMode.APP_PAGE)
-                DouyinCaptureController.startPaginationWithEvidence(selected, java.util.UUID.randomUUID().toString(), resume)
+                DouyinCaptureController.startPaginationWithEvidence(selected, UUID.randomUUID().toString(), resume)
                 startActivity(intent)
             } catch (failure: AppFailure) { status.text = failure.message }
         } }

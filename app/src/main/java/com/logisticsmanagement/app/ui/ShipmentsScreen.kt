@@ -36,14 +36,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.logisticsmanagement.app.AppContainer
 import com.logisticsmanagement.app.model.Account
 import com.logisticsmanagement.app.model.AccountState
+import com.logisticsmanagement.app.model.CaptureMode
 import com.logisticsmanagement.app.model.ParcelStatus
 import com.logisticsmanagement.app.model.Order
 import com.logisticsmanagement.app.model.Platform
@@ -56,7 +55,7 @@ private val StatusOrder = listOf(ParcelStatus.PICKUP, ParcelStatus.EXCEPTION, Pa
 @Composable
 internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>, unshippedOrders: List<Order>, accounts: List<Account>, storedAccounts: List<Account>, sources: List<SourceRef>, busy: Map<String, Boolean>, runAction: RunAction, copy: (String, String) -> Unit, modifier: Modifier, onOpen: (String) -> Unit, nativeUnlinkedOrders: List<Order> = emptyList()) {
     var query by rememberSaveable { mutableStateOf("") }
-    var statusFilter by rememberSaveable { mutableStateOf("全部") }
+    var statusFilter by rememberSaveable { mutableStateOf(ShipmentFilter.STATUS_ALL) }
     var platformFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var accountFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var archived by rememberSaveable { mutableStateOf(false) }
@@ -64,35 +63,15 @@ internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>,
     val sourcesById = remember(sources) { sources.groupBy { it.shipmentId } }
     val accountsById = remember(storedAccounts) { storedAccounts.associateBy { it.id } }
     val context = LocalContext.current
-    val results = shipments.filter { shipment ->
-        val shipmentSources = sourcesById[shipment.id].orEmpty()
-        shipment.archived == archived &&
-            (platformFilter == null || shipmentSources.any { it.platform.name == platformFilter }) &&
-            (accountFilter == null || shipmentSources.any { it.accountId == accountFilter }) &&
-            when (statusFilter) {
-                "待取件" -> shipment.status == ParcelStatus.PICKUP
-                "在途" -> shipment.status != ParcelStatus.SIGNED && shipment.status != ParcelStatus.PICKUP
-                "已签收" -> shipment.status == ParcelStatus.SIGNED
-                "全部" -> true
-                else -> shipment.status.displayName == statusFilter
-            } &&
-            (query.isBlank() || listOf(shipment.title, shipment.carrier, shipment.trackingNumber.orEmpty(), shipment.notes,
-                shipmentSources.joinToString(" ") { "${it.platform.displayName} ${it.accountLabel}" }).any { it.contains(query.trim(), ignoreCase = true) })
-    }.sortedWith(compareBy<Shipment> { StatusOrder.indexOf(it.status) }.thenByDescending { it.updatedAt }.thenBy { it.id })
-    val orderResults = unshippedOrders.filter { order ->
-        val account = accountsById[order.accountId]
-        !archived && statusFilter in setOf("全部", "在途", "待发货") &&
-            (platformFilter == null || account?.platform?.name == platformFilter) &&
-            (accountFilter == null || order.accountId == accountFilter) &&
-            (query.isBlank() || listOf(order.title, order.remoteId, account?.label.orEmpty(), account?.platform?.displayName.orEmpty()).any { it.contains(query.trim(), ignoreCase = true) })
-    }.sortedByDescending { it.createdAt }
-    val nativeResults = nativeUnlinkedOrders.filter { order ->
-        val account = accountsById[order.accountId]
-        !archived && (platformFilter == null || platformFilter == Platform.DOUYIN.name) &&
-            (accountFilter == null || order.accountId == accountFilter) &&
-            (statusFilter == "全部" || statusFilter == order.status.displayName || statusFilter == "在途" && order.status != ParcelStatus.SIGNED) &&
-            (query.isBlank() || listOf(order.title, order.remoteId, account?.label.orEmpty()).any { it.contains(query.trim(), true) })
-    }
+    val filter = ShipmentFilter(query, statusFilter, platformFilter, accountFilter, archived)
+    val results = shipments
+        .filter { it.matches(filter, sourcesById[it.id].orEmpty()) }
+        .sortedWith(compareBy<Shipment> { StatusOrder.indexOf(it.status) }.thenByDescending { it.updatedAt }.thenBy { it.id })
+    val orderResults = unshippedOrders
+        .filter { it.matchesUnshipped(filter, accountsById[it.accountId]) }
+        .sortedByDescending { it.createdAt }
+    val nativeResults = nativeUnlinkedOrders
+        .filter { it.matchesNativeUnlinked(filter, accountsById[it.accountId]) }
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -115,7 +94,7 @@ internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>,
             }
             item {
                 LazyRow(modifier = Modifier.testTag("statusFilters"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(listOf("全部", "待取件", "物流异常", "在途", "待发货", "运输中", "派送中", "已签收", "状态未提供")) { status ->
+                    items(ShipmentFilter.STATUS_OPTIONS) { status ->
                         FilterChip(selected = statusFilter == status, onClick = { statusFilter = status }, label = { Text(status) }, modifier = Modifier.sizeIn(minHeight = 48.dp).testTag("statusFilter_$status"))
                     }
                     item { FilterChip(selected = archived, onClick = { archived = !archived }, label = { Text("已归档") }, modifier = Modifier.sizeIn(minHeight = 48.dp).testTag("archivedFilter")) }
@@ -147,8 +126,8 @@ internal fun ShipmentsScreen(container: AppContainer, shipments: List<Shipment>,
                 item {
                     EmptyState(if (query.isNotBlank()) "没有找到包含「${query}」的包裹" else "当前条件下没有包裹",
                         if (accounts.isEmpty() && shipments.isEmpty() && unshippedOrders.isEmpty()) "在设置中添加平台账号后，可以查看订单和物流记录。" else "更新包裹或调整筛选条件后查看。") {
-                        if (query.isNotBlank() || platformFilter != null || accountFilter != null || archived || statusFilter != "全部") {
-                            TextButton(onClick = { query = ""; platformFilter = null; accountFilter = null; archived = false; statusFilter = "全部" }) { Text("清除筛选") }
+                        if (filter.hasCriteria) {
+                            TextButton(onClick = { query = ""; platformFilter = null; accountFilter = null; archived = false; statusFilter = ShipmentFilter.STATUS_ALL }) { Text("清除筛选") }
                         }
                     }
                 }
@@ -209,7 +188,7 @@ private fun UnshippedOrderCard(order: Order, account: Account?, onOpen: () -> Un
             Text(if (account?.platform == Platform.DOUYIN) "${order.status.displayName} · 物流待采集" else "待发货 · 平台尚未提供运单", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
             Text(account?.let { "${it.platform.displayName} · ${it.label}" } ?: "来源账号记录未提供", style = MaterialTheme.typography.bodyMedium)
             order.createdAt?.let { Text("下单时间 ${formatTimestamp(it)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            if (order.orderUrl.isNotBlank() || account?.platform == Platform.DOUYIN && account.captureMode == com.logisticsmanagement.app.model.CaptureMode.APP_PAGE) {
+            if (order.orderUrl.isNotBlank() || account?.platform == Platform.DOUYIN && account.captureMode == CaptureMode.APP_PAGE) {
                 TextButton(onClick = onOpen, enabled = account != null && !account.deleted, modifier = Modifier.sizeIn(minHeight = 48.dp)) {
                     Text(if (account?.deleted == true) "来源账号已经移除" else "查看平台订单")
                 }

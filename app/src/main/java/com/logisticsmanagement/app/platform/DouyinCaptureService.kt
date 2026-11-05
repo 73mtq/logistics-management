@@ -2,6 +2,7 @@ package com.logisticsmanagement.app.platform
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.view.accessibility.AccessibilityManager
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
@@ -18,6 +19,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -193,7 +196,6 @@ class DouyinCaptureService : AccessibilityService() {
     override fun onServiceConnected() {
         DouyinCaptureController.service = this
         enableCapture(false)
-        android.util.Log.i("DouyinNative", "serviceConnected")
     }
 
     internal fun enableCapture(enabled: Boolean) {
@@ -253,7 +255,7 @@ class DouyinCaptureService : AccessibilityService() {
     }
 
     internal suspend fun awaitOrdersFinished() { orderJob?.join(); navigationJob?.join(); eventWriter?.join() }
-    internal suspend fun paginationEvidence(value: kotlinx.serialization.json.JsonElement) {
+    internal suspend fun paginationEvidence(value: JsonElement) {
         val name = "pagination-${navigationSequence++.toString().padStart(6, '0')}.enc"
         val target = File(checkNotNull(directory), name)
         val credentials = (application as LogisticsApplication).container.credentials
@@ -314,7 +316,7 @@ class DouyinCaptureService : AccessibilityService() {
 
     internal fun recordEnd(message: String) {
         val container = (application as LogisticsApplication).container
-        val body = kotlinx.serialization.json.buildJsonObject {
+        val body = buildJsonObject {
             put("captureId", DouyinCaptureController.captureId)
             put("accountId", checkNotNull(evidenceAccount).id)
             put("message", message)
@@ -414,7 +416,7 @@ class DouyinCaptureService : AccessibilityService() {
         }
         orderScans?.takeIf { orderJob?.isActive == true }?.send(scan)
         orderSession?.let { if (!DouyinCaptureController.navigationMode) DouyinCaptureController.report(it.message()) }
-        val timing = kotlinx.serialization.json.buildJsonObject {
+        val timing = buildJsonObject {
             put("sequence", scan.sequence); put("forced", force)
             put("waitMillis", enteredAt - requestedAt); put("readMillis", readFinishedAt - readStartedAt)
             put("saveMillis", SystemClock.elapsedRealtime() - readFinishedAt)
@@ -469,7 +471,7 @@ class DouyinCaptureService : AccessibilityService() {
             val requested = serviceInfo.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0
             requestTouchExploration(false)
             try {
-                val manager = getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+                val manager = getSystemService(AccessibilityManager::class.java)
                 val ready = withTimeoutOrNull(1_500) { while (manager.isTouchExplorationEnabled) delay(25); true } == true
                 if (!ready) return NativeActionResult(false, "系统触摸模式尚未解除", "gesture")
                 val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
@@ -493,7 +495,7 @@ class DouyinCaptureService : AccessibilityService() {
             }
         }
         val result = activate()
-        val body = kotlinx.serialization.json.buildJsonObject {
+        val body = buildJsonObject {
             put("captureId", captureId); put("accountId", page.accountId); put("capturedAt", System.currentTimeMillis())
             put("windowId", page.windowId); put("method", result.method); put("accepted", result.accepted); put("reason", result.reason)
             put("purpose", purpose.name)

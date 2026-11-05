@@ -46,6 +46,17 @@ internal abstract class BrowserAdapter(protected val registry: PlatformRegistry)
 
     protected fun trackingKey(remoteId: String): String = "${platform.name.lowercase()}.tracking.${LogisticsRepository.stableId(remoteId)}"
 
+    protected fun resolveOrderUrl(value: String, platformName: String): String {
+        val url = try { URI(orderListUrl).resolve(URI(value)).toString() }
+        catch (failure: URISyntaxException) {
+            throw AppFailure("${platformName}订单链接格式尚未支持", FailureKind.UNSUPPORTED_RESPONSE)
+        }
+        if (!allowsOrigin(Uri.parse(url), allowedOrigins)) {
+            throw AppFailure("${platformName}订单链接没有指向已支持的官方网页", FailureKind.UNSUPPORTED_RESPONSE)
+        }
+        return url
+    }
+
     override suspend fun sync(account: Account, onBatch: suspend (OrderBatch) -> Unit) = sync(account, {}, onBatch)
 
     internal suspend fun sync(account: Account, onCapture: (CapturedResponse) -> Unit, onBatch: suspend (OrderBatch) -> Unit) = withContext(Dispatchers.Main.immediate) {
@@ -143,10 +154,7 @@ internal class JdAdapter(registry: PlatformRegistry) : BrowserAdapter(registry) 
     override fun parseOrders(capture: CapturedResponse): OrderPage? {
         if (capture.kind != "response" || !Uri.parse(capture.url).getQueryParameter("functionId").equals("order_list_m")) return null
         val root = platformResponse(capture.body, "京东")
-        val error = root.text("errorCode")
-        if (error == "302") throw AppFailure("京东账号需要重新登录", FailureKind.NEEDS_LOGIN)
-        if (error == "601") throw AppFailure("京东要求完成安全验证", FailureKind.NEEDS_VERIFICATION)
-        if (error.isNotBlank() && error != "0") throw AppFailure("京东返回业务错误 $error", FailureKind.SERVICE_ERROR)
+        checkJdEnvelope(root, "京东")
         val body = root.objectOrNull("body") ?: throw AppFailure("京东订单响应缺少 body", FailureKind.UNSUPPORTED_RESPONSE)
         val bodyError = body.text("errorCode")
         if (bodyError.isNotBlank() && bodyError != "0") {
@@ -215,11 +223,13 @@ internal class JdAdapter(registry: PlatformRegistry) : BrowserAdapter(registry) 
         }
     }
 
-    private fun officialUrl(value: String): String {
-        val url = try { URI(orderListUrl).resolve(URI(value)).toString() }
-        catch (failure: URISyntaxException) { throw AppFailure("京东订单链接格式尚未支持", FailureKind.UNSUPPORTED_RESPONSE) }
-        if (!allowsOrigin(Uri.parse(url), allowedOrigins)) throw AppFailure("京东订单链接没有指向已支持的官方网页", FailureKind.UNSUPPORTED_RESPONSE)
-        return url
+    private fun officialUrl(value: String): String = resolveOrderUrl(value, "京东")
+
+    private fun checkJdEnvelope(root: JsonObject, label: String) {
+        val error = root.text("errorCode")
+        if (error == "302") throw AppFailure("京东账号需要重新登录", FailureKind.NEEDS_LOGIN)
+        if (error == "601") throw AppFailure("京东要求完成安全验证", FailureKind.NEEDS_VERIFICATION)
+        if (error.isNotBlank() && error != "0") throw AppFailure("${label}返回业务错误 $error", FailureKind.SERVICE_ERROR)
     }
 
     override suspend fun trackingUrl(account: Account, source: SourceRef): String =
@@ -236,10 +246,7 @@ internal class JdAdapter(registry: PlatformRegistry) : BrowserAdapter(registry) 
     override fun parseTracking(capture: CapturedResponse, source: SourceRef): ImportedShipment? {
         if (capture.kind == "response" && Uri.parse(capture.url).getQueryParameter("functionId") == "get_logistics_list_by_order_m") {
             val root = platformResponse(capture.body, "京东物流")
-            val error = root.text("errorCode")
-            if (error == "302") throw AppFailure("京东账号需要重新登录", FailureKind.NEEDS_LOGIN)
-            if (error == "601") throw AppFailure("京东要求完成安全验证", FailureKind.NEEDS_VERIFICATION)
-            if (error.isNotBlank() && error != "0") throw AppFailure("京东物流返回业务错误 $error", FailureKind.SERVICE_ERROR)
+            checkJdEnvelope(root, "京东物流")
             val body = root.objectOrNull("body") ?: throw AppFailure("京东物流响应缺少 body", FailureKind.UNSUPPORTED_RESPONSE)
             val points = body.requiredArray("tracePointVOList")
             if (points.isEmpty()) throw AppFailure("京东没有提供该订单的物流轨迹", FailureKind.SERVICE_ERROR)
@@ -324,7 +331,6 @@ internal class PddAdapter(registry: PlatformRegistry) : BrowserAdapter(registry)
         val code = root.text("error_code")
         if (code.isNotBlank() && code != "0") throw AppFailure("拼多多返回业务错误 $code，请在网页完成验证", FailureKind.NEEDS_VERIFICATION)
         val list = root.requiredArray("orders").map { it.requireObject("拼多多订单") }
-        android.util.Log.i("PddOrders", "page=${capture.requestPage} type=${capture.requestType} count=${list.size}")
         val orders = list.mapNotNull { order ->
             val id = order.requiredText("order_sn")
             val statusText = order.requiredText("order_status_prompt")
@@ -341,12 +347,7 @@ internal class PddAdapter(registry: PlatformRegistry) : BrowserAdapter(registry)
         return OrderPage(orders, list.map { it.requiredText("order_sn") }.toSet(), complete = list.isEmpty())
     }
 
-    private fun resolvePddLink(link: String): String {
-        val url = try { URI(orderListUrl).resolve(URI(link)).toString() }
-        catch (failure: URISyntaxException) { throw AppFailure("拼多多订单链接格式尚未支持", FailureKind.UNSUPPORTED_RESPONSE) }
-        if (!allowsOrigin(Uri.parse(url), allowedOrigins)) throw AppFailure("拼多多订单链接没有指向已支持的官方网页", FailureKind.UNSUPPORTED_RESPONSE)
-        return url
-    }
+    private fun resolvePddLink(link: String): String = resolveOrderUrl(link, "拼多多")
 
     override fun trackingAction(session: PlatformWebView, source: SourceRef) {
         val uri = Uri.parse(session.currentUrl)

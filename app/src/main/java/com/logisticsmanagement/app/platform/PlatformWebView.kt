@@ -10,6 +10,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.CookieManagerCompat
@@ -196,12 +198,12 @@ internal class PlatformWebView(
             domStorageEnabled = true
             allowFileAccess = false
             allowContentAccess = false
-            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
             useWideViewPort = true
             loadWithOverviewMode = true
-            if (account.platform == com.logisticsmanagement.app.model.Platform.DOUYIN) {
+            if (account.platform == Platform.DOUYIN) {
                 val version = WebViewCompat.getCurrentWebViewPackage(context)?.versionName
                     ?: throw AppFailure("无法取得系统 WebView 版本，请更新系统 WebView", FailureKind.UNSUPPORTED_WEBVIEW)
                 userAgentString = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$version Safari/537.36"
@@ -264,7 +266,6 @@ internal class PlatformWebView(
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val allowed = allowsOrigin(request.url, adapter.allowedOrigins)
                 if (request.isForMainFrame) {
-                    android.util.Log.i("ParcelRedirect", "shouldOverride mainFrame=${request.isForMainFrame} allowed=$allowed url=${request.url.buildUpon().clearQuery().fragment(null).build()}")
                     messages.trySend(CapturedResponse("redirect", request.url.toString(), if (allowed) "allowed-navigation" else "blocked-navigation"))
                 }
                 return !allowed
@@ -275,7 +276,6 @@ internal class PlatformWebView(
                 messages.trySend(CapturedResponse("pageFinished", url))
                 val uri = Uri.parse(url)
                 if (!allowsOrigin(uri, adapter.allowedOrigins)) {
-                    android.util.Log.i("ParcelRedirect", "onPageFinished unauthorized url=${uri.buildUpon().clearQuery().fragment(null).build()}")
                     messages.trySend(CapturedResponse("redirect", url, "finished-unauthorized"))
                     close(AppFailure("平台跳转到尚未授权的网页来源", FailureKind.NEEDS_VERIFICATION))
                     return
@@ -289,7 +289,7 @@ internal class PlatformWebView(
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) close(AppFailure("网页加载失败：${error.description}", FailureKind.NETWORK))
             }
-            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: android.webkit.WebResourceResponse) {
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
                 if (request.isForMainFrame) close(AppFailure("网页返回 HTTP ${response.statusCode}", FailureKind.SERVICE_ERROR))
             }
             override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {

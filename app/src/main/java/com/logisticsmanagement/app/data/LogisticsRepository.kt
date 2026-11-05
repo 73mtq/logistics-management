@@ -9,6 +9,8 @@ import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.util.UUID
 
+private enum class OrderSaveResult { INSERTED, UPDATED, UNCHANGED, SKIPPED }
+
 class LogisticsRepository(val database: LogisticsDatabase) {
     private val dao = database.dao()
     fun observeAccounts() = dao.observeAccounts()
@@ -86,60 +88,83 @@ class LogisticsRepository(val database: LogisticsDatabase) {
         val cutoff = Instant.now().minus(90, ChronoUnit.DAYS).toEpochMilli()
         return database.withTransaction {
             if (dao.account(account.id)?.deleted != false) throw AppFailure("账号已移除", FailureKind.CONFIGURATION)
+            val excluded = removeExcludedOrders(account.id, batch.excludedRemoteIds)
+            dao.deleteOrphanTracking()
             var inserted = 0
             var updated = 0
-            var excluded = 0
-            for (remoteId in batch.excludedRemoteIds) {
-                val id = stableId(account.id, remoteId)
-                val sources = dao.orderSources(id)
-                dao.deleteOrderSources(id)
-                dao.deleteOrder(id)
-                for (shipmentId in sources.map { it.shipmentId }.distinct()) {
-                    if (dao.sources(shipmentId).isEmpty()) {
-                        dao.deleteEvents(shipmentId)
-                        dao.deleteAliases(shipmentId)
-                        dao.deleteShipment(shipmentId)
-                    }
-                }
-                excluded++
-            }
-            dao.deleteOrphanTracking()
-            batch.orders.forEach { order ->
-                require(order.remoteId.isNotBlank()) { "订单缺少唯一标识" }
+            for (order in batch.orders) {
                 require(order.remoteId !in batch.excludedRemoteIds)
-                val orderId = stableId(account.id, order.remoteId)
-                val existingOrder = dao.order(orderId)
-                if (existingOrder == null && order.status == ParcelStatus.SIGNED && order.createdAt != null && order.createdAt < cutoff) return@forEach
-                val storedStatus = if (existingOrder?.status == ParcelStatus.SIGNED) ParcelStatus.SIGNED else order.status
-                val stored = Order(orderId, account.id, order.remoteId, order.title, storedStatus, order.createdAt ?: existingOrder?.createdAt, order.orderUrl, order.imageUrl ?: existingOrder?.imageUrl)
-                if (existingOrder == null) inserted++ else if (stored != existingOrder) updated++
-                dao.putOrder(stored)
-                order.shipments.forEach { raw ->
-                    val incoming = normalizeCarrier(raw)
-                    require(incoming.remoteId.isNotBlank()) { "包裹缺少来源标识" }
-                    val sourceId = stableId(account.id, order.remoteId, incoming.remoteId)
-                    val source = dao.source(sourceId)
-                    val byNumber = incoming.trackingNumber?.takeIf { it.isNotBlank() && incoming.carrierCode.isNotBlank() }?.let { dao.shipmentByNumber(incoming.carrierCode, it) }
-                    val previousSourceShipment = source?.let { dao.shipment(it.shipmentId) }
-                    val prior = if (byNumber != null && previousSourceShipment != null && byNumber.id != previousSourceShipment.id) {
-                        combineShipments(previousSourceShipment, byNumber)
-                    } else byNumber ?: previousSourceShipment
-                    val id = prior?.id ?: UUID.randomUUID().toString()
-                    dao.putShipment(merge(id, order.title, order.imageUrl, incoming, prior, stored.status == ParcelStatus.SIGNED))
-                    dao.putSource(SourceRef(sourceId, id, orderId, account.id, account.platform, order.remoteId, incoming.remoteId, order.orderUrl, account.label))
-                    saveEvents(id, incoming.events)
-                }
-                if (stored.status == ParcelStatus.SIGNED && order.shipments.isEmpty()) {
-                    for (source in dao.orderSources(orderId)) {
-                        val shipment = checkNotNull(dao.shipment(source.shipmentId))
-                        dao.putShipment(merge(shipment.id, order.title, order.imageUrl,
-                            ImportedShipment(source.remoteShipmentId, status = ParcelStatus.SIGNED), shipment, true))
-                        dao.putSource(source.copy(orderUrl = order.orderUrl, accountLabel = account.label))
-                    }
+                when (saveOrder(account, order, cutoff)) {
+                    OrderSaveResult.INSERTED -> inserted++
+                    OrderSaveResult.UPDATED -> updated++
+                    OrderSaveResult.UNCHANGED, OrderSaveResult.SKIPPED -> Unit
                 }
             }
             if (account.captureMode == CaptureMode.WEB) prepareTracking(account.id)
             IngestResult(inserted, updated, excluded)
+        }
+    }
+    private suspend fun removeExcludedOrders(accountId: String, remoteIds: Set<String>): Int {
+        var removed = 0
+        for (remoteId in remoteIds) {
+            val orderId = stableId(accountId, remoteId)
+            val shipmentIds = dao.orderSources(orderId).map { it.shipmentId }.distinct()
+            dao.deleteOrderSources(orderId)
+            dao.deleteOrder(orderId)
+            for (shipmentId in shipmentIds) {
+                if (dao.sources(shipmentId).isEmpty()) {
+                    dao.deleteEvents(shipmentId)
+                    dao.deleteAliases(shipmentId)
+                    dao.deleteShipment(shipmentId)
+                }
+            }
+            removed++
+        }
+        return removed
+    }
+    private suspend fun saveOrder(account: Account, order: ImportedOrder, cutoff: Long): OrderSaveResult {
+        require(order.remoteId.isNotBlank()) { "订单缺少唯一标识" }
+        val orderId = stableId(account.id, order.remoteId)
+        val existing = dao.order(orderId)
+        if (existing == null && order.status == ParcelStatus.SIGNED &&
+            order.createdAt != null && order.createdAt < cutoff) return OrderSaveResult.SKIPPED
+        val status = if (existing?.status == ParcelStatus.SIGNED) ParcelStatus.SIGNED else order.status
+        val stored = Order(orderId, account.id, order.remoteId, order.title, status,
+            order.createdAt ?: existing?.createdAt, order.orderUrl, order.imageUrl ?: existing?.imageUrl)
+        dao.putOrder(stored)
+        order.shipments.forEach { saveOrderShipment(account, order, orderId, status == ParcelStatus.SIGNED, it) }
+        if (status == ParcelStatus.SIGNED && order.shipments.isEmpty()) markOrderShipmentsSigned(account, order, orderId)
+        return when {
+            existing == null -> OrderSaveResult.INSERTED
+            stored != existing -> OrderSaveResult.UPDATED
+            else -> OrderSaveResult.UNCHANGED
+        }
+    }
+    private suspend fun saveOrderShipment(account: Account, order: ImportedOrder, orderId: String,
+        signed: Boolean, raw: ImportedShipment) {
+        val incoming = normalizeCarrier(raw)
+        require(incoming.remoteId.isNotBlank()) { "包裹缺少来源标识" }
+        val sourceId = stableId(account.id, order.remoteId, incoming.remoteId)
+        val source = dao.source(sourceId)
+        val byNumber = incoming.trackingNumber
+            ?.takeIf { it.isNotBlank() && incoming.carrierCode.isNotBlank() }
+            ?.let { dao.shipmentByNumber(incoming.carrierCode, it) }
+        val previousSourceShipment = source?.let { dao.shipment(it.shipmentId) }
+        val prior = if (byNumber != null && previousSourceShipment != null && byNumber.id != previousSourceShipment.id) {
+            combineShipments(previousSourceShipment, byNumber)
+        } else byNumber ?: previousSourceShipment
+        val id = prior?.id ?: UUID.randomUUID().toString()
+        dao.putShipment(merge(id, order.title, order.imageUrl, incoming, prior, signed))
+        dao.putSource(SourceRef(sourceId, id, orderId, account.id, account.platform, order.remoteId,
+            incoming.remoteId, order.orderUrl, account.label))
+        saveEvents(id, incoming.events)
+    }
+    private suspend fun markOrderShipmentsSigned(account: Account, order: ImportedOrder, orderId: String) {
+        for (source in dao.orderSources(orderId)) {
+            val shipment = checkNotNull(dao.shipment(source.shipmentId))
+            dao.putShipment(merge(shipment.id, order.title, order.imageUrl,
+                ImportedShipment(source.remoteShipmentId, status = ParcelStatus.SIGNED), shipment, true))
+            dao.putSource(source.copy(orderUrl = order.orderUrl, accountLabel = account.label))
         }
     }
     suspend fun applyTracking(source: SourceRef, incoming: ImportedShipment) {
@@ -165,9 +190,8 @@ class LogisticsRepository(val database: LogisticsDatabase) {
     suspend fun prepareTracking(accountId: String): List<TrackingQueue> = database.withTransaction {
         val pending = dao.accountSources(accountId).filter { source ->
             val shipment = checkNotNull(dao.shipment(source.shipmentId))
-            !shipment.archived && (shipment.status != ParcelStatus.SIGNED || dao.events(shipment.id).none { event ->
-                com.logisticsmanagement.app.platform.parcelStatus(event.status + " " + event.text) == ParcelStatus.SIGNED
-            })
+            !shipment.archived && (shipment.status != ParcelStatus.SIGNED ||
+                dao.events(shipment.id).none { isEventStatus(it, ParcelStatus.SIGNED) })
         }
         val now = System.currentTimeMillis()
         dao.enqueueTracking(pending.map { TrackingQueue(it.id, accountId, now) })
@@ -209,6 +233,10 @@ class LogisticsRepository(val database: LogisticsDatabase) {
     private suspend fun saveEvents(id: String, events: List<TrackingEventData>) {
         dao.putEvents(events.map { TrackingEvent(stableId(id, it.time.toString(), it.text), id, it.time, it.text, it.status) })
     }
+    private fun isEventStatus(event: TrackingEventData, expected: ParcelStatus): Boolean =
+        com.logisticsmanagement.app.platform.parcelStatus(event.status + " " + event.text) == expected
+    private fun isEventStatus(event: TrackingEvent, expected: ParcelStatus): Boolean =
+        com.logisticsmanagement.app.platform.parcelStatus(event.status + " " + event.text) == expected
     private fun normalizeCarrier(shipment: ImportedShipment): ImportedShipment = shipment.copy(
         carrier = shipment.carrier.trim(),
         carrierCode = CarrierCodes.resolve(shipment.carrier) ?: CarrierCodes.resolve(shipment.carrierCode) ?: shipment.carrierCode.trim().lowercase(Locale.ROOT),
@@ -220,12 +248,10 @@ class LogisticsRepository(val database: LogisticsDatabase) {
     private fun resolveStatus(previousStatus: ParcelStatus?, previousEvents: List<TrackingEventData>, incomingStatus: ParcelStatus,
         incomingEvents: List<TrackingEventData>, confirmedSigned: Boolean): ParcelStatus {
         val events = previousEvents + incomingEvents
-        val signedTime = events.filter { com.logisticsmanagement.app.platform.parcelStatus(it.status + " " + it.text) == ParcelStatus.SIGNED }
-            .maxOfOrNull { it.time }
+        val signedTime = events.filter { isEventStatus(it, ParcelStatus.SIGNED) }.maxOfOrNull { it.time }
         val signed = confirmedSigned || previousStatus == ParcelStatus.SIGNED || incomingStatus == ParcelStatus.SIGNED || signedTime != null
         if (signed) {
-            val exceptionTime = events.filter { com.logisticsmanagement.app.platform.parcelStatus(it.status + " " + it.text) == ParcelStatus.EXCEPTION }
-                .maxOfOrNull { it.time }
+            val exceptionTime = events.filter { isEventStatus(it, ParcelStatus.EXCEPTION) }.maxOfOrNull { it.time }
             return if (signedTime != null && exceptionTime != null && exceptionTime > signedTime) {
                 ParcelStatus.EXCEPTION
             } else ParcelStatus.SIGNED

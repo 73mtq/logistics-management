@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.logisticsmanagement.app.AppContainer
 import com.logisticsmanagement.app.model.Account
+import com.logisticsmanagement.app.model.Platform
 import com.logisticsmanagement.app.model.Shipment
 import com.logisticsmanagement.app.model.SourceRef
 import com.logisticsmanagement.app.model.TrackingEvent
@@ -67,7 +68,7 @@ internal fun ShipmentDetailScreen(container: AppContainer, shipment: Shipment?, 
             items(sources, key = { it.id }) { source ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("${source.platform.displayName} · ${source.accountLabel}", style = MaterialTheme.typography.bodyLarge)
-                    if (source.orderUrl.isNotBlank() || source.platform == com.logisticsmanagement.app.model.Platform.DOUYIN) {
+                    if (source.orderUrl.isNotBlank() || source.platform == Platform.DOUYIN) {
                         val account = accounts.firstOrNull { it.id == source.accountId }
                         TextButton(onClick = { container.platforms.openSource(context, checkNotNull(account), source) }, enabled = account != null, modifier = Modifier.sizeIn(minHeight = 48.dp)) { Text(if (account == null) "来源账号已经移除" else "查看平台订单") }
                     }

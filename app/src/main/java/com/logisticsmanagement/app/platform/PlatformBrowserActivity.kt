@@ -1,5 +1,6 @@
 package com.logisticsmanagement.app.platform
 
+import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.view.View
@@ -17,6 +18,7 @@ import com.logisticsmanagement.app.model.Account
 import com.logisticsmanagement.app.model.AccountState
 import com.logisticsmanagement.app.model.AppFailure
 import com.logisticsmanagement.app.model.FailureKind
+import com.logisticsmanagement.app.model.OrderBatch
 import com.logisticsmanagement.app.model.Platform
 import com.logisticsmanagement.app.model.SourceRef
 import kotlinx.coroutines.Dispatchers
@@ -61,7 +63,7 @@ class PlatformBrowserActivity : ComponentActivity() {
             setPadding(16, 16, 16, 16)
             textSize = 16f
             text = "正在打开平台网页"
-            accessibilityLiveRegion = android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         val actions = LinearLayout(this)
         fun action(text: String, body: () -> Unit) {
@@ -81,7 +83,7 @@ class PlatformBrowserActivity : ComponentActivity() {
                 val adapter = registry.adapter(current.platform)
                 if (current.platform == Platform.DOUYIN) {
                     val browser = session ?: return@setOnClickListener
-                    if (android.net.Uri.parse(browser.currentUrl).host == "www.douyin.com") browser.load(adapter.orderListUrl)
+                    if (Uri.parse(browser.currentUrl).host == "www.douyin.com") browser.load(adapter.orderListUrl)
                     else browser.evaluate(CaptureScripts.douyinOrders)
                     status.text = "请在官方商城中进入订单页面，应用将采集页面响应"
                 } else {
@@ -114,78 +116,87 @@ class PlatformBrowserActivity : ComponentActivity() {
         val sourceId = intent.getStringExtra("sourceId")
         if (shipmentId != null && sourceId != null) source = registry.repository.getSources(shipmentId).firstOrNull { it.id == sourceId && it.accountId == id }
         val adapter = registry.adapter(selected.platform)
+        val browser = createSession(selected, adapter)
+        val mode = intent.getStringExtra("mode") ?: "login"
+        browser.load(initialUrl(mode, selected, adapter))
+        lifecycleScope.launch {
+            try {
+                for (capture in browser.messages) handleCapture(selected, adapter, capture)
+            } catch (failure: AppFailure) { recordFailure(failure) }
+        }
+        if (mode == "login" && selected.platform != Platform.DOUYIN) pollLoginSession(selected)
+    }
+
+    private fun createSession(selected: Account, adapter: PlatformAdapter): PlatformWebView {
         val browser = PlatformWebView(this, selected, adapter, registry.profiles, true)
         session = browser
         webContainer.addView(browser.view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        browser.onPage = { url ->
-            status.text = "${selected.platform.displayName}：${android.net.Uri.parse(url).host.orEmpty()}"
+        browser.onPage = { url -> status.text = "${selected.platform.displayName}：${Uri.parse(url).host.orEmpty()}" }
+        return browser
+    }
+
+    private suspend fun initialUrl(mode: String, selected: Account, adapter: PlatformAdapter): String = when (mode) {
+        "login" -> adapter.loginUrl
+        "source" -> source?.orderUrl?.takeIf(String::isNotBlank)
+            ?: throw AppFailure("该来源没有提供可浏览的订单网页", FailureKind.CONFIGURATION)
+        "order" -> {
+            val orderId = intent.getStringExtra("orderId")
+                ?: throw AppFailure("没有提供订单标识", FailureKind.CONFIGURATION)
+            registry.repository.getOrders().firstOrNull { it.id == orderId && it.accountId == selected.id }
+                ?.orderUrl?.takeIf(String::isNotBlank)
+                ?: throw AppFailure("订单没有提供可浏览的网页", FailureKind.CONFIGURATION)
         }
-        val mode = intent.getStringExtra("mode") ?: "login"
-        val isLogin = mode == "login"
-        val initial = when (mode) {
-            "login" -> adapter.loginUrl
-            "source" -> source?.orderUrl?.takeIf(String::isNotBlank)
-                ?: throw AppFailure("该来源没有提供可浏览的订单网页", FailureKind.CONFIGURATION)
-            "order" -> {
-                val orderId = intent.getStringExtra("orderId")
-                    ?: throw AppFailure("没有提供订单标识", FailureKind.CONFIGURATION)
-                registry.repository.getOrders().firstOrNull { it.id == orderId && it.accountId == selected.id }
-                    ?.orderUrl?.takeIf(String::isNotBlank)
-                    ?: throw AppFailure("订单没有提供可浏览的网页", FailureKind.CONFIGURATION)
-            }
-            else -> throw AppFailure("网页打开方式尚未支持", FailureKind.CONFIGURATION)
+        else -> throw AppFailure("网页打开方式尚未支持", FailureKind.CONFIGURATION)
+    }
+
+    private suspend fun handleCapture(selected: Account, adapter: PlatformAdapter, capture: CapturedResponse) {
+        registry.rememberCapture(selected, capture)
+        if (selected.platform == Platform.DOUYIN && capture.kind == "response") {
+            registry.rememberDouyinPage(selected, session?.currentUrl.orEmpty())
+            status.text = "抖音响应已经采集，当前结构需要确认。可以导出响应结构诊断。"
+            updateState(AccountState.NEEDS_VERIFICATION, "抖音响应结构需要通过真实账号确认")
+            return
         }
-        browser.load(initial)
-        lifecycleScope.launch {
-            try {
-                for (capture in browser.messages) {
-                    registry.rememberCapture(selected, capture)
-                    if (selected.platform == Platform.DOUYIN && capture.kind == "response") {
-                        registry.rememberDouyinPage(selected, browser.currentUrl)
-                        status.text = "抖音响应已经采集，当前结构需要确认。可以导出响应结构诊断。"
-                        updateState(AccountState.NEEDS_VERIFICATION, "抖音响应结构需要通过真实账号确认")
-                        continue
-                    }
-                    if (capture.kind == "challenge") { status.text = capture.body; updateState(AccountState.NEEDS_VERIFICATION, capture.body); continue }
-                    try {
-                        if (adapter is BrowserAdapter) {
-                            val page = withContext(Dispatchers.Default) { adapter.parseOrders(capture) }
-                            if (page != null) {
-                                adapter.rememberOrderPage(selected, page)
-                                val result = registry.repository.ingest(selected, com.logisticsmanagement.app.model.OrderBatch(page.orders, page.excludedRemoteIds, page.remoteIds.size))
-                                status.text = if (page.remoteIds.isEmpty()) "平台当前订单列表为空" else "已读取 ${page.remoteIds.size} 个订单，${result.description}"
-                                updateState(AccountState.READY, null)
-                            }
-                            source?.let { currentSource ->
-                                withContext(Dispatchers.Default) { adapter.parseTracking(capture, currentSource) }?.let {
-                                    registry.repository.applyTracking(currentSource, it)
-                                    status.text = "物流记录已经保存"
-                                }
-                            }
-                        } else if (adapter is TaobaoAdapter && capture.kind == "ssr" && source != null) {
-                            val currentSource = checkNotNull(source)
-                            val incoming = withContext(Dispatchers.Default) { adapter.parseSsr(capture.body, currentSource.remoteShipmentId) }
-                            registry.repository.applyTracking(currentSource, incoming)
-                            status.text = "物流记录已经保存"
-                        }
-                    } catch (failure: AppFailure) { recordFailure(failure) }
-                }
-            } catch (failure: AppFailure) { recordFailure(failure) }
+        if (capture.kind == "challenge") {
+            status.text = capture.body
+            updateState(AccountState.NEEDS_VERIFICATION, capture.body)
+            return
         }
-        if (isLogin && selected.platform != Platform.DOUYIN) lifecycleScope.launch {
-            while (!loginFinished && !isFinishing) {
-                delay(2_000)
-                if (hasLoginSession(selected)) {
-                    android.util.Log.i("ParcelLogin", "autoLoginReady accountId=${selected.id} url=${session?.currentUrl}")
+        try {
+            if (adapter is BrowserAdapter) {
+                val page = withContext(Dispatchers.Default) { adapter.parseOrders(capture) }
+                if (page != null) {
+                    adapter.rememberOrderPage(selected, page)
+                    val result = registry.repository.ingest(selected, OrderBatch(page.orders, page.excludedRemoteIds, page.remoteIds.size))
+                    status.text = if (page.remoteIds.isEmpty()) "平台当前订单列表为空" else "已读取 ${page.remoteIds.size} 个订单，${result.description}"
                     updateState(AccountState.READY, null)
-                    loginFinished = true
-                    status.text = "登录会话已经保存"
-                    val current = checkNotNull(registry.repository.getAccount(selected.id))
-                    registry.repository.saveAccount(current.copy(lastAttemptAt = null))
-                    setResult(RESULT_OK)
-                    finish()
                 }
+                source?.let { currentSource ->
+                    withContext(Dispatchers.Default) { adapter.parseTracking(capture, currentSource) }?.let {
+                        registry.repository.applyTracking(currentSource, it)
+                        status.text = "物流记录已经保存"
+                    }
+                }
+            } else if (adapter is TaobaoAdapter && capture.kind == "ssr" && source != null) {
+                val currentSource = checkNotNull(source)
+                val incoming = withContext(Dispatchers.Default) { adapter.parseSsr(capture.body, currentSource.remoteShipmentId) }
+                registry.repository.applyTracking(currentSource, incoming)
+                status.text = "物流记录已经保存"
             }
+        } catch (failure: AppFailure) { recordFailure(failure) }
+    }
+
+    private fun pollLoginSession(selected: Account) = lifecycleScope.launch {
+        while (!loginFinished && !isFinishing) {
+            delay(2_000)
+            if (!hasLoginSession(selected)) continue
+            updateState(AccountState.READY, null)
+            loginFinished = true
+            status.text = "登录会话已经保存"
+            val current = checkNotNull(registry.repository.getAccount(selected.id))
+            registry.repository.saveAccount(current.copy(lastAttemptAt = null))
+            setResult(RESULT_OK)
+            finish()
         }
     }
 
@@ -202,7 +213,6 @@ class PlatformBrowserActivity : ComponentActivity() {
                 updateState(AccountState.NEEDS_VERIFICATION, "请在官方商城订单页面采集真实响应")
                 status.text = "会话已经保存，请进入官方商城订单页面以采集响应"
             } else if (hasLoginSession(current)) {
-                android.util.Log.i("ParcelLogin", "finishLoginReady accountId=${current.id} url=${session?.currentUrl}")
                 updateState(AccountState.READY, null)
                 val stored = checkNotNull(registry.repository.getAccount(current.id))
                 registry.repository.saveAccount(stored.copy(lastAttemptAt = null))

@@ -3,6 +3,7 @@ package com.logisticsmanagement.app.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
@@ -42,9 +43,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.logisticsmanagement.app.AppContainer
+import com.logisticsmanagement.app.data.AppSettings
 import com.logisticsmanagement.app.model.AppFailure
 import com.logisticsmanagement.app.model.Account
-import com.logisticsmanagement.app.model.Platform
 import com.logisticsmanagement.app.model.SourceRef
 import com.logisticsmanagement.app.model.Shipment
 import kotlinx.coroutines.CoroutineScope
@@ -78,7 +79,7 @@ fun LogisticsApp(container: AppContainer, initialShipmentId: String? = null, ini
         else combine(shipments.map { container.repository.observeSources(it.id) }) { it.toList().flatten() }
     }
     val sources by sourceFlow.collectAsStateWithLifecycle(initialValue = emptyList())
-    val settings by remember(container) { container.settings.observe() }.collectAsStateWithLifecycle(initialValue = com.logisticsmanagement.app.data.AppSettings())
+    val settings by remember(container) { container.settings.observe() }.collectAsStateWithLifecycle(initialValue = AppSettings())
     var destination by rememberSaveable { mutableStateOf(when (initialDestination) {
         Destination.SETTINGS.name -> Destination.SETTINGS.name
         else -> Destination.SHIPMENTS.name
@@ -194,7 +195,7 @@ private fun ShipmentDetailRoute(container: AppContainer, shipmentId: String, acc
 
 internal fun openAccountLogin(container: AppContainer, context: Context, account: Account) {
     if (account.captureMode == CaptureMode.APP_PAGE) {
-        context.startActivity(android.content.Intent(context, DouyinCaptureActivity::class.java).putExtra("accountId", account.id))
+        context.startActivity(Intent(context, DouyinCaptureActivity::class.java).putExtra("accountId", account.id))
     } else container.platforms.openLogin(context, account)
 }
 

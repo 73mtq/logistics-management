@@ -77,3 +77,12 @@ T15四项Gradle检查通过，2分20秒，1项执行82项保持；主机测试�
 文档链接、两个APK的签名和SHA-256核查通过。待公开的源码与文档对照当前真实副本100项私人标识及凭据特征检查；主APK的151个归档条目同样检查，未发现匹配。该检查覆盖已知标识和凭据特征，完整原始资料继续只保存在本机。本次复用T15已复核的Jev证据，没有新增模型请求或调用费用。
 
 五个经核实的生成文件目标已清理，共2729个文件、157534226字节，约150MiB。最终两个APK、测试及Lint报告另行保存；历史阶段证据、数据库副本、工具和本机构建依赖保留。本次未增加平台业务验收范围，后续顺序见[开发计划](development-plan.md)。完整日志及指纹保存至本机 `work/evidence/project-pause-delivery/` 和 `work/logs/project-pause-delivery/`。
+
+## 2026-11-05 代码重构验证
+
+对启动恢复、Repository 事务、SyncCoordinator、平台适配器、采集页面与包裹筛选执行行为保持重构；未修改 Room schema、平台接口、业务 Models、凭据格式与数据内容。
+
+- `:app:assembleDebug`、`:app:assembleDebugAndroidTest`、`:app:testDebugUnitTest`、`:app:lintDebug` 退出 0；完整执行 1分39秒，最终复核 44秒。
+- 主机测试：IdentityTest 2项、PlatformTimeTest 5项、ShipmentFilterTest 5项通过；NativeNavigationEvidenceTest 7项因未配置真实 T13 目录跳过。新增 5 项筛选纯函数测试。
+- Lint：0 errors、71 warnings、2 hints；warning 为既有的 UseKtx、RequiresFeature 等提示。
+- 未运行：86 项设备仪器测试、真实账号同步、平台响应解析与抖音采集。平台业务范围仍以本文件既有记录为准。

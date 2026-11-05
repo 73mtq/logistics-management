@@ -81,7 +81,7 @@ internal class TaobaoAdapter(private val registry: PlatformRegistry) : PlatformA
                 val items = order.requiredArray("subOrders").map { it.requireObject("淘宝商品").objectOrNull("itemInfo") }
                 val title = items.mapNotNull { it?.text("title")?.takeIf(String::isNotBlank) }.joinToString("、").ifBlank { "淘宝订单" }
                 val createdAt = order.objectOrNull("orderInfo")?.text("createTime")?.takeIf(String::isNotBlank)?.let(::parsePlatformTime)
-                makeOrder(id, statusText, title, items.firstOrNull()?.text("pic").orEmpty(), createdAt).second
+                makeOrder(id, statusText, title, items.firstOrNull()?.text("pic").orEmpty(), createdAt)
             }
         } else {
             val main = inner.filterKeys { it.startsWith("Main_") }
@@ -107,7 +107,7 @@ internal class TaobaoAdapter(private val registry: PlatformRegistry) : PlatformA
                     itemFields.objectOrNull("item") ?: throw AppFailure("淘宝商品缺少 item", FailureKind.UNSUPPORTED_RESPONSE)
                 }
                 val title = items.map { it.text("title") }.filter(String::isNotBlank).joinToString("、").ifBlank { "淘宝订单" }
-                makeOrder(id, statusText, title, items.firstOrNull()?.text("pic").orEmpty()).second
+                makeOrder(id, statusText, title, items.firstOrNull()?.text("pic").orEmpty())
             }
         }
         val control = envelope.objectOrNull("global")?.objectOrNull("pageControl")
@@ -177,11 +177,11 @@ internal class TaobaoAdapter(private val registry: PlatformRegistry) : PlatformA
     internal suspend fun diagnoseOrderQuery(account: Account): JsonObject =
         mtop(account, "h5api.m.taobao.com", "mtop.taobao.order.queryboughtlistv2", orderQueryData(1))
 
-    private fun makeOrder(id: String, statusText: String, title: String, picture: String, createdAt: Long? = null): Pair<String, ImportedOrder> {
+    private fun makeOrder(id: String, statusText: String, title: String, picture: String, createdAt: Long? = null): ImportedOrder {
         val status = orderStatus(statusText)
         val detail = Uri.parse("https://pages-g.m.taobao.com/wow/z/app/mtb/logisticsV2/h5-detail").buildUpon()
             .appendQueryParameter("x-ssr", "true").appendQueryParameter("bizOrderId", id).build().toString()
-        return statusText to ImportedOrder(id, title, status, createdAt, detail, imageUrl(picture),
+        return ImportedOrder(id, title, status, createdAt, detail, imageUrl(picture),
             if (status == ParcelStatus.WAITING_SHIPMENT) emptyList() else listOf(ImportedShipment(id, status = status)))
     }
 
@@ -214,7 +214,6 @@ internal class TaobaoAdapter(private val registry: PlatformRegistry) : PlatformA
                 registry.rememberCapture(account, capture)
                 if (capture.kind == "ssr" && Uri.parse(capture.url).getQueryParameter("bizOrderId") == source.remoteOrderId) {
                     val result = parseSsr(capture.body, source.remoteShipmentId)
-                    android.util.Log.i("ParcelTracking", "trackingReady orderId=${source.remoteOrderId} number=${result.trackingNumber} carrier=${result.carrier}")
                     return result
                 }
             }

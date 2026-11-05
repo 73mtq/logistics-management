@@ -18,7 +18,7 @@ internal suspend fun platformRequest(client: OkHttpClient, request: Request): Pl
     val call = client.newCall(request)
     continuation.invokeOnCancellation { call.cancel() }
     call.enqueue(object : Callback {
-        override fun onFailure(call: Call, error: IOException) {
+        override fun onFailure(call: Call, e: IOException) {
             if (continuation.isActive) continuation.resumeWithException(AppFailure("平台网络请求失败，请检查网络连接", FailureKind.NETWORK))
         }
         override fun onResponse(call: Call, response: Response) {

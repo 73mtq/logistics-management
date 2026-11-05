@@ -6,7 +6,6 @@ import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import com.logisticsmanagement.app.model.*
 import kotlinx.coroutines.*
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import java.security.MessageDigest
 
