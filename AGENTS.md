@@ -8,7 +8,7 @@
 - [docs/project-map.md](docs/project-map.md)：项目关系图、调用过程与按任务选择源码的入口。
 - [docs/architecture.md](docs/architecture.md)：数据保留、合并、会话、后台任务与隐私规则。
 - [docs/acceptance.md](docs/acceptance.md)：已经执行的验证及未验证范围。
-- [docs/development-plan.md](docs/development-plan.md)：暂停状态、后续顺序及恢复入口。
+- [docs/development-plan.md](docs/development-plan.md)：阶段顺序、完成条件及恢复入口。
 - [docs/codegraph.md](docs/codegraph.md)：本地代码关系索引与查询命令。
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)：参考项目与复用许可。
 
@@ -39,7 +39,7 @@ codegraph callers syncAccount
 
 构建版本以根目录和 `app/build.gradle.kts` 为准。文档修改无需运行 Android 业务测试；需要验证代码时使用 README 中对应任务，并将实际通过、跳过和未运行范围分别记录。
 
-当前暂停功能开发，保留现有账号、profile及本机证据。恢复开发由用户指定任务后执行，不自动启动平台查询或抖音采集。
+2026-11-23 完成 P0 基线回归，后续按开发计划 P1 至 P7 执行。保留现有账号、profile 及本机证据；不自动启动平台查询或抖音采集，需要登录、验证码或授权时由用户在手机完成。
 
 ## 后续阶段的 Jev 辅助
 

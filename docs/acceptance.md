@@ -1,6 +1,6 @@
 # 验收记录
 
-更新日期：2026-10-17，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。本阶段序列执行至T15；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
+更新日期：2026-11-23，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。本阶段序列执行至T15；2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
 
 ## 已验证的阶段范围
 
@@ -86,3 +86,17 @@ T15四项Gradle检查通过，2分20秒，1项执行82项保持；主机测试�
 - 主机测试：IdentityTest 2项、PlatformTimeTest 5项、ShipmentFilterTest 5项通过；NativeNavigationEvidenceTest 7项因未配置真实 T13 目录跳过。新增 5 项筛选纯函数测试。
 - Lint：0 errors、71 warnings、2 hints；warning 为既有的 UseKtx、RequiresFeature 等提示。
 - 未运行：86 项设备仪器测试、真实账号同步、平台响应解析与抖音采集。平台业务范围仍以本文件既有记录为准。
+
+## 2026-11-23 P0 基线回归
+
+2026-11-05 重构提交 a05f752 之后首次在真实设备执行回归。设备 24129PN74C 为 Android 17（API 37，系统 OS4.0.4.0.XOCCNXM，构建日期 2026-11-12），应用为 1.1.0、versionCode 2、Room schema v2。
+
+- 构建：:app:assembleDebug、:app:assembleDebugAndroidTest、:app:testDebugUnitTest --rerun、:app:lintDebug --rerun 退出0；1分55秒，83项任务，9项执行、74项保持。
+- 主机测试：IdentityTest 2项、PlatformTimeTest 5项、ShipmentFilterTest 5项通过；NativeNavigationEvidenceTest 7项因未配置T13证据目录跳过。合计12项通过、7项跳过。
+- Lint：0 errors、71 warnings、2 hints。
+- 设备测试：6项通过、0跳过、0失败。MigrationEvidenceTest 2项0.109秒；DataUiEvidenceTest 1项42.356秒；SyncRecoveryEvidenceTest#replayInterruptedDatabase 1项0.087秒、#replayRealOrders 1项1.132秒、#replayRecordedFailure 1项0.082秒。输入为T14真实schema1与schema2副本、T09真实订单与失败响应、T09中断副本；运行前核对SHA-256。
+- 数据库：resume-before与after的一致副本中，八张业务表全部字段及settings、encrypted_credentials、webview_profiles、work_schedules字节一致；user_version 2、integrity_check ok。启动恢复把京东账号由SYNCING改为PARTIAL并记录“上次更新已中断”，before与resume-before仅Account表因此不同，其余七张表与四份配置一致。
+- 安装：两个APK覆盖安装并保留数据。主APK SHA-256 ebd308f6…、测试包SHA-256 8d91e82f…、调试证书SHA-256 7957a084…；安装前设备主包为T15交付的ce8d7e8a…。
+- 测试依赖：设备系统在2026-11-12更新后移除android.hardware.input.InputManager.getInstance；原Espresso 3.5.0通过反射调用该方法，Compose页面测试在EspressoLink初始化时失败。androidTest增加espresso-core 3.8.0-alpha04后通过；该版本改用Context.getSystemService(InputManager.class)反射injectInputEvent，test:core与test:runner解析为1.8.0-alpha04。正式包没有依赖变化。
+- 未运行：ShipmentStatusEvidenceTest回放（本机缺少earlierDatabase与database副本）、SessionIsolationTest（拼多多账号需要登录）、86项设备测试全量、真实账号同步、平台响应解析与抖音采集。job scheduler当前没有该应用的登记作业。
+- 资料：本机work/evidence/p0-baseline-2026-11-23/与work/logs/p0-baseline-2026-11-23/。

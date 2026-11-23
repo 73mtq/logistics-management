@@ -4,11 +4,11 @@
 
 ## 开发状态与安装包
 
-2026-10-17 起暂停功能开发。T00 至 T15 已执行并保存记录，完整业务验收仍有未完成项目。当前源码、测试、账号与 profile、原始证据及本机工具继续保留，暂停期间不自动启动开发测试或抖音采集。
+2026-11-23 完成 P0 基线回归：真实设备上迁移、页面、Repository 回放与失败分类共 6 项设备测试通过，主机测试 12 项通过、7 项跳过。T00 至 T15 的阶段记录、账号与 profile、原始证据及本机工具继续保留；后续按 P1 至 P7 执行，不自动启动平台查询或抖音采集。
 
 [下载 1.1.0 开发预发布](https://github.com/73mtq/logistics-management/releases/tag/v1.1.0-dev.20261017)：提供主 APK、SHA-256 和签名说明。使用既有调试签名，适合当前开发验证；测试 APK 及私人证据保存在本机。下载后核查 SHA-256，通过 `adb install -r app-debug.apk` 覆盖安装；沿用现有账号资料需要保留应用数据。
 
-已完成工作及继续开发顺序见[开发计划与恢复入口](docs/development-plan.md)，实际通过、失败、跳过和缺少样本范围见[验收记录](docs/acceptance.md)。恢复开发由用户指定目标后开始。
+已完成工作及继续开发顺序见[开发计划与恢复入口](docs/development-plan.md)，实际通过、失败、跳过和缺少样本范围见[验收记录](docs/acceptance.md)。
 
 ## 页面与使用
 
@@ -29,6 +29,12 @@
 | 抖音 | 官方 App 的无障碍节点 | 已绑定真实抖音号，导入一个符合条件的已签收订单及关联物流；停止继续和进程恢复取得证据，完整列表结束及部分候选字段仍未确认 |
 
 这些结果来自对应阶段的真实记录，不能代表全部账号或当前平台服务持续可用。T06 至 T14 的未完成范围继续保留；详情见[分阶段验收](docs/acceptance.md)。
+
+## 功能要求与已知限制
+
+使用需要 Android 8.0（API 26）及以上设备。网页平台依赖系统 WebView 的多 profile、Cookie 读取、文档脚本、Web 消息和浏览数据删除能力；缺少任一能力时对应平台无法登录或同步。抖音采集需要开启无障碍服务并在应用内手动启动。Jev 辅助判断需要自行配置 API key，可以关闭。
+
+已知限制：京东完整账号分页及部分类型、淘宝部分服务详情与网页滚动分页、抖音完整列表结束与候选字段、完整物流历史、账号移除与系统调度部分分支仍在 P1 至 P5 范围。网页会话可能过期，失败与验证状态显示在账号卡片。当前安装包使用调试签名，release 签名与发布流程在 P7。设备 Compose 页面测试使用 espresso-core 3.8.0-alpha04，因为 Android 17 移除了旧版反射调用的 InputManager.getInstance；稳定版发布后应替换。
 
 ## 账号与同步
 
@@ -58,7 +64,7 @@ $env:ANDROID_HOME = 'D:\Android\Sdk'
 .\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :app:lintDebug
 ```
 
-产物为 `app/build/outputs/apk/debug/app-debug.apk` 和 `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`。当前交付使用既有调试签名。
+产物为 `app/build/outputs/apk/debug/app-debug.apk` 和 `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`。当前交付使用既有调试签名。推送与拉取请求由 [GitHub Actions](.github/workflows/android.yml) 执行构建、主机测试和 Lint 并上传报告；工作流不运行设备测试，不接触真实账号或私人资料。
 
 ```powershell
 adb devices
@@ -77,7 +83,7 @@ adb shell am start -n com.logisticsmanagement.app/.MainActivity
 - [项目地图](docs/project-map.md)：模块、流程和源码入口。
 - [架构说明](docs/architecture.md)：事务、来源合并、恢复与隐私。
 - [验收记录](docs/acceptance.md)：真实通过、失败、跳过及未运行范围。
-- [开发计划与恢复入口](docs/development-plan.md)：暂停状态、优先顺序、验收条件和本机资料位置。
+- [开发计划与恢复入口](docs/development-plan.md)：阶段顺序、完成条件、验收要求和本机资料位置。
 - [CodeGraph](docs/codegraph.md)：本地索引及查询命令。
 - [开发说明](AGENTS.md)与[第三方许可](THIRD_PARTY_NOTICES.md)。
 
