@@ -50,7 +50,7 @@ P4 与 P5 不依赖抖音阶段，但需要在 P0 完成后执行；如果用户
 2. 更新文档：docs/development-plan.md 使用本文件的新顺序；docs/acceptance.md 增加 2026-11-23 的构建、主机测试、Lint 与设备回归记录；docs/project-map.md 和 docs/codegraph.md 更新代码基线、文件数量和索引记录；README 增加功能要求与已知限制部分。
 3. 增加持续集成：新增 .github/workflows/android.yml，使用 JDK 21 与 Android SDK，运行 :app:assembleDebug、:app:testDebugUnitTest、:app:lintDebug；上传测试报告与 Lint 报告。工作流不使用真实账号、不运行设备测试、不接触私人资料。
 4. 设备回归：直接 am instrument 运行 MigrationEvidenceTest、DataUiEvidenceTest、ShipmentStatusEvidenceTest、SyncRecoveryEvidenceTest 等不依赖新平台样本的测试；运行受影响的 Repository、SyncCoordinator 与页面流程；比较主库八张表和四份应用配置的前后副本。
-5. 记录结果：分别写明通过、失败、跳过和未运行；主机测试当前为 12 项通过、7 项跳过，设备测试按实际执行数量记录，不把缓存结果当成重新执行。
+5. 记录结果：分别写明通过、失败、跳过和未运行；主机测试当前报告为 12 项通过、7 项跳过，本次构建任务为 UP-TO-DATE；P0 需要重新执行主机测试并记录实际结果，设备测试按实际执行数量记录，不把缓存结果当成重新执行。
 
 **完成条件**：CI 在推送后通过；文档日期、基线、文件数量和测试计数与当前代码一致；设备回归的实际数量、耗时与断言可核查；主库比较没有业务字段变化；没有新增私人资料进入仓库。
 

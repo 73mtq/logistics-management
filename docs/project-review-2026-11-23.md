@@ -8,7 +8,7 @@
 
 本次审查覆盖产品范围、页面与数据流、四个平台读取、抖音原生采集、数据保留、隐私与凭据、构建与测试、文档与交付。公开文档包括 README、docs/project-map.md、docs/architecture.md、docs/acceptance.md、docs/development-plan.md、docs/jev-workflow.md、docs/codegraph.md 与 AGENTS.md [S1-S8]；阶段记录包括主状态、执行方案、交接入口、T10 至 T15 与暂停交付 [S9-S15][S36-S38]；源码包括 app/src/main 下的 42 个 Kotlin 文件与 app/src/test、app/src/androidTest 下的 28 个文件 [S16-S33]。Git 历史包含 2026-11-05 的重构提交 a05f752 与之后的提交 5c049f1 [S34]。
 
-本次执行了三项构建检查：:app:assembleDebug、:app:testDebugUnitTest、:app:lintDebug。构建成功，主机测试 12 项通过、7 项跳过，Lint 为 0 errors、71 warnings、2 hints [S35]。设备仪器测试没有运行；真实账号同步、平台响应解析、抖音采集和数据库比较都没有在本次执行。文中关于平台真实可用范围的判断以 docs/acceptance.md 的记录为依据；关于当前代码行为的判断以源码路径为依据，两类判断分别标注。
+本次执行了三项构建检查：:app:assembleDebug、:app:testDebugUnitTest、:app:lintDebug。构建任务成功；assembleDebug 与 testDebugUnitTest 为 UP-TO-DATE，lintDebug 本次执行。主机测试报告记录 12 项通过、7 项跳过，本次没有重新执行这些测试；Lint 为 0 errors、71 warnings、2 hints [S35]。设备仪器测试没有运行；真实账号同步、平台响应解析、抖音采集和数据库比较都没有在本次执行。文中关于平台真实可用范围的判断以 docs/acceptance.md 的记录为依据；关于当前代码行为的判断以源码路径为依据，两类判断分别标注。
 
 ## 项目现状
 
@@ -112,7 +112,7 @@ CredentialStore.decrypt 对格式使用 require，对 Keystore 解密直接调�
 
 ### 发现 10：Repository、Sync 与解析器的自动化回归测试不足
 
-app/src/test 只有 4 个测试类：IdentityTest 2 项、PlatformTimeTest 5 项、ShipmentFilterTest 5 项通过，NativeNavigationEvidenceTest 7 项因为缺少 T13_EVIDENCE_DIR 跳过 [S31][S35]。app/src/androidTest 有 23 个测试类、86 项 @Test，但多数需要真实账号、真实响应或真实设备资料，缺少条件时跳过 [S32][S4]。Repository 的 ingest、removeExcludedOrders、combineShipments、resolveStatus，SyncCoordinator 的批次、期限、取消，以及四个平台的解析器，都没有主机级回归测试。
+app/src/test 只有 4 个测试类；本次构建的主机测试任务为 UP-TO-DATE，报告记录 IdentityTest 2 项、PlatformTimeTest 5 项、ShipmentFilterTest 5 项通过，NativeNavigationEvidenceTest 7 项因为缺少 T13_EVIDENCE_DIR 跳过 [S31][S35]。app/src/androidTest 有 23 个测试类、86 项 @Test，但多数需要真实账号、真实响应或真实设备资料，缺少条件时跳过 [S32][S4]。Repository 的 ingest、removeExcludedOrders、combineShipments、resolveStatus，SyncCoordinator 的批次、期限、取消，以及四个平台的解析器，都没有主机级回归测试。
 
 影响是 2026-11-05 的重构只能靠构建、12 项主机测试和 Lint 证明“编译与静态检查通过”，不能证明合并、排除、签收传播和恢复行为没有变化；后续修改这些高风险逻辑时，最早的反馈仍然要等到设备会话。处理方向分两层：把不依赖 Android 的判定提取成纯函数，用主机测试覆盖 90 天规则、排除清理、签收传播、别名合并和进度完成条件；用隔离数据库的仪器测试覆盖 Repository 事务，输入使用本机真实归档响应的副本，缺少资料时跳过并在报告中记录。测试数据必须标注用途，不能把构造记录当成平台验收证据。
 
@@ -157,7 +157,7 @@ docs/acceptance.md 已经逐阶段记录了未完成范围 [S4]。下面按恢�
 | T14 迁移与页面 | schema1 迁移、schema2 重开、两轮页面保存、备注归档、主库保持 | 历史共享来源、别名、非空用户字段、被删除平台清理分支、取件码、MainActivity 启动联合流程、跨暂停无障碍列表归因 |
 | T15 文档与 Jev | 九项四分类核查、七项一致、达到 0.95 的五项一致、费用记录 | 通用准确率、UNCERTAIN 专门样本、整体提速与人工介入改善 |
 
-设备测试没有在本次审查执行，因此“构建成功”只能说明源码可以编译、主机测试与 Lint 通过，不能说明 86 项设备测试通过。恢复开发时，先运行 P0 的设备回归，再进入平台阶段；任何缺少真实输入的测试继续跳过，并在阶段记录中写明跳过数量与原因。
+设备测试没有在本次审查执行，因此“构建成功”只能说明源码可以编译、缓存的主机测试报告与 Lint 通过，不能说明 86 项设备测试通过。恢复开发时，先运行 P0 的设备回归，再进入平台阶段；任何缺少真实输入的测试继续跳过，并在阶段记录中写明跳过数量与原因。
 
 ## 后续开发计划
 
