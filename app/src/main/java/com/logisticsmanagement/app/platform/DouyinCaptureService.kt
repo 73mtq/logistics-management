@@ -2,6 +2,12 @@ package com.logisticsmanagement.app.platform
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.graphics.Bitmap
+import android.os.Build
+import android.view.Display
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import android.content.Context
 import android.view.accessibility.AccessibilityManager
 import android.accessibilityservice.GestureDescription
@@ -374,6 +380,41 @@ class DouyinCaptureService : AccessibilityService() {
         }.toString()
         File(target, "end.enc").writeText(container.credentials.encrypt(body))
         cleanupEvidence()
+    }
+
+    internal suspend fun captureScreen(): OcrScreen? = suspendCancellableCoroutine { continuation ->
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            continuation.resume(null)
+            return@suspendCancellableCoroutine
+        }
+        takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+            override fun onSuccess(screenshot: ScreenshotResult) {
+                val bitmap = Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                    ?.copy(Bitmap.Config.ARGB_8888, false)
+                screenshot.hardwareBuffer.close()
+                if (bitmap == null) {
+                    if (continuation.isActive) continuation.resume(null)
+                    return
+                }
+                val client = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+                client.process(InputImage.fromBitmap(bitmap, 0))
+                    .addOnSuccessListener { result ->
+                        client.close()
+                        val lines = result.textBlocks.flatMap { block -> block.lines.mapNotNull { line ->
+                            val box = line.boundingBox ?: return@mapNotNull null
+                            OcrLine(line.text, listOf(box.left, box.top, box.right, box.bottom))
+                        } }
+                        if (continuation.isActive) continuation.resume(OcrScreen(result.text, lines))
+                    }
+                    .addOnFailureListener {
+                        client.close()
+                        if (continuation.isActive) continuation.resume(null)
+                    }
+            }
+            override fun onFailure(errorCode: Int) {
+                if (continuation.isActive) continuation.resume(null)
+            }
+        })
     }
 
     internal suspend fun captureNow(): NativeScan =

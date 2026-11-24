@@ -5,6 +5,7 @@
     android:canRetrieveWindowContent="true"
     android:canRequestTouchExplorationMode="true"
     android:canPerformGestures="true"
+    android:canTakeScreenshot="true"
     android:description="@string/douyin_accessibility_description"
     android:notificationTimeout="250"
     android:packageNames="com.ss.android.ugc.aweme" />

@@ -6,6 +6,9 @@ import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 
+internal data class OcrLine(val text: String, val bounds: List<Int>)
+internal data class OcrScreen(val text: String, val lines: List<OcrLine>)
+
 internal data class OcrLogisticsResult(
     val carrier: String, val trackingNumber: String, val status: ParcelStatus,
     val events: List<TrackingEventData>, val rawLines: List<String>)
