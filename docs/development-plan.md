@@ -1,7 +1,7 @@
 # 开发计划与恢复入口
 
 更新日期：2026-11-23，Asia/Shanghai。
-状态：2026-11-23 完成 P0 基线回归；后续按本文件 P1 至 P7 执行，P0 结果见[验收记录](acceptance.md)。版本 1.1.0、versionCode 2、Room schema v2。
+状态：2026-11-24 完成 P1 代码与回放验证（真实采集轮次未运行）；后续按本文件 P2 至 P7 执行，P0 与 P1 结果见[验收记录](acceptance.md)。版本 1.1.0、versionCode 2、Room schema v2。
 审查依据与主要发现见[项目审查报告](project-review-2026-11-23.md)。
 
 ## 已完成工作
