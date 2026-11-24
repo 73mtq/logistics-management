@@ -134,7 +134,7 @@ T15四项Gradle检查通过，2分20秒，1项执行82项保持；主机测试�
 
 - 京东：JdOrderEvidenceTest#replayRealOrders 使用 T09 真实响应与 T06 期望，1 项通过，0.088 秒；排除编号集合与期望一致。
 - 淘宝：TaobaoOrderEvidenceTest#replayRealOrders 使用 T09 真实 MTOP 响应与 T07 classic 期望，1 项通过，0.089 秒；最后一页 complete 为真，排除与保留集合一致。
-- 数据库清理回放未运行：T09 before.db 已经清理过，缺少清理前的存量排除行，两项回放报告“副本需要实际存量排除样本”，不计入产品结果。
+- 数据库清理回放：使用 T06 before 与 T07 before 的 schema v2 副本，京东 1 项通过 0.183 秒、淘宝 1 项通过 0.189 秒；两轮 ingest 后只删除已确认编号对应的订单、来源与独立包裹，其余字段保持，integrity_check ok。
 - 未运行：京东多页实时读取与列表结束、淘宝 nextPageIndex 与 hasMore 实时分页、登录失效与安全验证、当前待发货、充值、即时配送与服务订单样本。
 
 ## 2026-11-24 P5 至 P7 状态
