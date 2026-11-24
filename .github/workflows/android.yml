@@ -33,14 +33,14 @@ jobs:
         run: ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --console=plain
       - name: Upload unit test report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: unit-test-report
           path: app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
       - name: Upload lint report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: lint-report
           path: app/build/reports/lint-results-debug.*
