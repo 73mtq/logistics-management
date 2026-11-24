@@ -111,3 +111,13 @@ T15四项Gradle检查通过，2分20秒，1项执行82项保持；主机测试�
 - 主机测试：16 项通过、3 项跳过、0 失败。设备测试：MigrationEvidenceTest 3 项 0.128 秒、DataUiEvidenceTest 1 项 47.411 秒通过。Lint 0 errors、71 warnings、2 hints。
 - 未运行：真实抖音采集轮次、服务重连真机流程、卡片识别失败诊断的现场记录。无障碍启用列表当前只有 hello.litiaotiao.app；自动开启无障碍属于用户授权范围，本阶段没有修改系统设置。
 - 安装包：主包 SHA-256 6df05ced…、测试包 SHA-256 367399cd…。推送 commit e3e747f 后 Android CI 通过（5 分钟内完成构建、主机测试、Lint 与报告上传）。
+
+## 2026-11-24 P2 原生采集资源与恢复语义
+
+- 资料保留：默认只保存采集进度与每轮汇总（文件数、字节数、耗时）；扫描、事件、动作、耗时与分页资料由“记录完整采集诊断资料”开关控制，默认关闭。采集热路径不再写入 PlatformRegistry 的最近响应缓存。
+- 清理规则：保留最近 3 轮并删除超过 7 天的目录，启动、开始采集与结束采集时执行；账号移除删除加密进度文件。清理前设备有 46 个证据目录、667293696 字节，已导出到本机 work/evidence/p2-native-evidence/；启动清理后目录数为 0。
+- 轮次语义：恢复采集清空本轮 blocker、保留上一轮 blocker 到 previousBlocked、生成新 cycleId，blockedCards 的 key 带 cycleId；本轮未再出现的订单标为 stale；completeFor 要求本轮订单 finished 或 stale，并保持列表结束、范围确认、结束证据与无 blocker 条件。
+- 进度重建：加密进度与备份改名为带时间戳的 .corrupt-* 副本；采集页面在进度读取失败时显示“重建采集进度”按钮，确认后提示开始新一轮。
+- 异常边界：captureNow 与 captureRefreshed 用 AppFailure 表示采集已经停止；采集协程捕获 Throwable 并继续抛出 CancellationException；结束资料在 Dispatchers.IO 写入，IOException 转为 AppFailure；采集页面入口捕获 AppFailure。
+- 主机测试：18 项通过、3 项跳过、0 失败，其中 NativeProgressTest 2 项覆盖恢复轮次与 stale 完成条件。设备测试：MigrationEvidenceTest 3 项 0.448 秒、DataUiEvidenceTest 1 项 47.505 秒通过。Lint 0 errors、71 warnings、2 hints。
+- 未运行：真实采集的停止、八分钟到期、账号移除三种条件，诊断开关打开后的资料写入量，损坏进度重建与现场 blocked 诊断。设备无障碍服务未启用，需要用户授权与抖音前台操作。推送 commit 6ca945c 后 Android CI 通过。
