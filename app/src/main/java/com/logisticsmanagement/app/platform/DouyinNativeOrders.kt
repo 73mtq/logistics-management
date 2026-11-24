@@ -35,8 +35,11 @@ internal object DouyinNativeOrders {
         }
         page.copy(nodes = nodes.values.toList())
     }
-    fun isList(page: NativePage) = page.nodes.any { label(it).startsWith("待收货/使用") } &&
-        page.nodes.none { label(it) == "订单编号" }
+    fun isList(page: NativePage): Boolean {
+        val labels = page.nodes.filter { it.visible }.map(::label)
+        val tabs = setOf("全部", "待支付", "待付款", "待发货", "待收货", "待收货/使用", "售后", "退款/售后", "评价", "待评价")
+        return "全部" in labels && labels.count { it in tabs } >= 2 && labels.none { it == "订单编号" }
+    }
 
     fun identity(scan: NativeScan): NativeFieldEvidence? {
         val fields = scan.pages.filter { page -> page.nodes.any { it.visible && label(it).startsWith("我的订单") } }

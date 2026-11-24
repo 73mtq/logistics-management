@@ -93,12 +93,19 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
     private suspend fun activate(page: NativePage, node: NativeNode, intended: NativeActionPurpose = NativeActionPolicy.purpose(page, node)) {
         var currentPage = page
         var currentNode = node
-        repeat(3) {
+        repeat(5) { attempt ->
             val scan = read()
             val fresh = NativePaginationRules.activePages(scan).singleOrNull { it.windowId == currentPage.windowId }
             val resolved = fresh?.nodes?.singleOrNull { it.path == currentNode.path && it.text == currentNode.text &&
                 it.description == currentNode.description && it.bounds == currentNode.bounds }
-            if (fresh == null || resolved == null) throw AppFailure("动作执行前目标页面已经变化，请重新核查", FailureKind.UNSUPPORTED_RESPONSE)
+                ?: fresh?.nodes?.singleOrNull { it.visible && it.enabled && it.text == currentNode.text &&
+                    it.description == currentNode.description && it.bounds.size == 4 && currentNode.bounds.size == 4 &&
+                    kotlin.math.abs(it.bounds[1] - currentNode.bounds[1]) <= 40 && kotlin.math.abs(it.bounds[0] - currentNode.bounds[0]) <= 40 }
+            if (fresh == null || resolved == null) {
+                if (attempt == 4) throw AppFailure("动作执行前目标页面已经变化：${progress.value.step}，目标 ${DouyinNativeOrders.label(currentNode)}", FailureKind.UNSUPPORTED_RESPONSE)
+                delay(500)
+                return@repeat
+            }
             currentPage = fresh; currentNode = resolved
             val purpose = intended
             NativeActionPolicy.rejection(currentPage, currentNode, intended = purpose)?.let {
@@ -191,14 +198,17 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
         step("商城")
         activate("商城", NativeActionPurpose.MALL)
         step("我的订单")
-        val entry = awaitPage { matches(it, "我的订单 按钮").size == 1 || matches(it, "我的订单").size == 1 }
-        val preferred = matches(entry, "我的订单 按钮")
-        val targets = if (preferred.isNotEmpty()) preferred else matches(entry, "我的订单")
-        if (targets.size != 1) throw AppFailure("商城订单入口无法唯一确认", FailureKind.UNSUPPORTED_RESPONSE)
-        val target = targets.single()
+        val entry = awaitPage { scan -> matches(scan, "我的订单 按钮").size == 1 || matches(scan, "我的订单").size == 1 ||
+            NativePaginationRules.activePages(scan).any(DouyinNativeOrders::isList) }
         DouyinCaptureController.markPhase("订单列表")
-        activate(target.first, target.second, NativeActionPurpose.ORDERS)
-        awaitPage { NativePaginationRules.activePages(it).any(DouyinNativeOrders::isList) }
+        if (NativePaginationRules.activePages(entry).none(DouyinNativeOrders::isList)) {
+            val preferred = matches(entry, "我的订单 按钮")
+            val targets = if (preferred.isNotEmpty()) preferred else matches(entry, "我的订单")
+            if (targets.size != 1) throw AppFailure("商城订单入口无法唯一确认", FailureKind.UNSUPPORTED_RESPONSE)
+            val target = targets.single()
+            activate(target.first, target.second, NativeActionPurpose.ORDERS)
+            awaitPage { NativePaginationRules.activePages(it).any(DouyinNativeOrders::isList) }
+        }
         activate("全部", NativeActionPurpose.ALL)
         var list = awaitPage { NativePaginationRules.activePages(it).any(DouyinNativeOrders::isList) }
         list = read()
