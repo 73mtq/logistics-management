@@ -64,7 +64,7 @@ $env:ANDROID_HOME = 'D:\Android\Sdk'
 .\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :app:lintDebug
 ```
 
-产物为 `app/build/outputs/apk/debug/app-debug.apk` 和 `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`。当前开发包使用调试签名。发布包使用本机 keystore：设置 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD` 后执行 `:app:assembleRelease`。keystore 与密码保存在本机 `work/release/`，不进入仓库；发布签名与调试签名不同，覆盖安装到已有调试包会因签名不一致被拒绝，切换签名前需要备份资料并卸载旧包。推送与拉取请求由 [GitHub Actions](.github/workflows/android.yml) 执行构建、主机测试和 Lint 并上传报告；工作流不运行设备测试，不接触真实账号或私人资料。
+产物为 `app/build/outputs/apk/debug/app-debug.apk` 和 `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`。当前开发包使用调试签名。发布包使用本机 keystore：设置 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD` 后执行 `:app:assembleRelease`。切换签名时可以先加 `-PdebuggableRelease=true` 构建临时可调试发布包，安装后通过 `run-as` 恢复整包备份，再安装正式包；该流程会先卸载旧包，必须在确认备份可用后执行。keystore 与密码保存在本机 `work/release/`，不进入仓库；发布签名与调试签名不同，覆盖安装到已有调试包会因签名不一致被拒绝，切换签名前需要备份资料并卸载旧包。推送与拉取请求由 [GitHub Actions](.github/workflows/android.yml) 执行构建、主机测试和 Lint 并上传报告；工作流不运行设备测试，不接触真实账号或私人资料。
 
 ```powershell
 adb devices

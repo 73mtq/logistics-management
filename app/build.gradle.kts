@@ -10,6 +10,7 @@ val releaseStoreFile: String? = System.getenv("RELEASE_STORE_FILE")
 val releaseStorePassword: String? = System.getenv("RELEASE_STORE_PASSWORD")
 val releaseKeyAlias: String? = System.getenv("RELEASE_KEY_ALIAS")
 val releaseKeyPassword: String? = System.getenv("RELEASE_KEY_PASSWORD")
+val debuggableRelease: Boolean = providers.gradleProperty("debuggableRelease").orNull == "true"
 
 android {
     namespace = "com.logisticsmanagement.app"
@@ -41,6 +42,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            isDebuggable = debuggableRelease
             signingConfig = signingConfigs.findByName("release")
         }
     }
