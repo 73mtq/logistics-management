@@ -31,17 +31,17 @@ codegraph sync .
 
 | 项目 | 数量 |
 | --- | --- |
-| 索引文件 | 227 |
-| 节点 | 4,048 |
-| 关系 | 10,974 |
-| kotlin | 120 |
+| 索引文件 | 229 |
+| 节点 | 4,098 |
+| 关系 | 11,128 |
+| kotlin | 121 |
 | xml | 95 |
 | java | 6 |
 | properties | 4 |
 | python | 1 |
-| yaml | 1 |
+| yaml | 2 |
 
-索引包含构建生成源码，kotlin 数量高于源码 70 份（main 42、单元测试 4、设备测试 24）。节点包含文件、import、namespace、class、interface、function、method、enum 等类型；关系包含调用、引用、实现与其他静态源码关系。索引数量描述当次源码，源码变更后以 `codegraph status` 为准。Android 生命周期、Room 生成代码及平台网页行为需要结合源码与[验收记录](acceptance.md)阅读。
+索引包含构建生成源码，kotlin 数量高于源码 71 份（main 42、单元测试 5、设备测试 24）。节点包含文件、import、namespace、class、interface、function、method、enum 等类型；关系包含调用、引用、实现与其他静态源码关系。索引数量描述当次源码，源码变更后以 `codegraph status` 为准。Android 生命周期、Room 生成代码及平台网页行为需要结合源码与[验收记录](acceptance.md)阅读。
 
 ## 查询项目
 

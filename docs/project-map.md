@@ -2,7 +2,7 @@
 
 产品与构建入口见[README](../README.md)，数据规则见[架构说明](architecture.md)，当前真实范围见[验收记录](acceptance.md)。本机有 `.codegraph/` 时，理解或定位代码优先使用[CodeGraph](codegraph.md)。
 
-2026-11-23 完成 P0 基线回归；后续按[开发计划与恢复入口](development-plan.md)的 P1 至 P7 执行。当前版本 1.1.0、versionCode 2、Room schema v2；Kotlin 源码 70 份（main 42、单元测试 4、设备测试 24）。
+2026-11-23 完成 P0 基线回归；后续按[开发计划与恢复入口](development-plan.md)的 P1 至 P7 执行。当前版本 1.1.0、versionCode 2、Room schema v2；Kotlin 源码 71 份（main 42、单元测试 5、设备测试 24）。
 
 ## 启动与页面
 

@@ -1,7 +1,7 @@
 # 开发计划与恢复入口
 
 更新日期：2026-11-23，Asia/Shanghai。
-状态：2026-11-24 完成 P4 真实响应回放与 P3 结束标志补充；P3 现场范围、P4 实时同步与 P5 至 P7 尚未完成，结果见[验收记录](acceptance.md)。版本 1.1.0、versionCode 2、Room schema v2。
+状态：2026-11-24 完成 P0 至 P2；P3 与 P4 完成可离线部分；P5、P6 现场验证与 P7 覆盖安装等待真实条件，P7 签名与 release 构建已完成。结果见[验收记录](acceptance.md)。版本 1.1.0、versionCode 2、Room schema v2。
 审查依据与主要发现见[项目审查报告](project-review-2026-11-23.md)。
 
 ## 已完成工作
