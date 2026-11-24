@@ -47,7 +47,7 @@ internal object NativePaginationRules {
         }
     }
     fun terminal(scan: NativeScan): NativeFieldEvidence? {
-        val labels = setOf("没有更多订单", "没有更多订单了", "没有更多了", "暂无订单", "暂无相关订单")
+        val labels = setOf("没有更多订单", "没有更多订单了", "没有更多订单信息", "没有更多了", "没有更多内容了", "暂无订单", "暂无相关订单", "到底了", "已经到底了")
         return activePages(scan).filter(DouyinNativeOrders::isList).firstNotNullOfOrNull { page ->
             page.nodes.firstOrNull { it.visible && DouyinNativeOrders.label(it) in labels }?.let {
                 NativeFieldEvidence("listEnd", DouyinNativeOrders.label(it), page.windowId, it.path, scan.sequence)
