@@ -121,3 +121,18 @@ T15四项Gradle检查通过，2分20秒，1项执行82项保持；主机测试�
 - 异常边界：captureNow 与 captureRefreshed 用 AppFailure 表示采集已经停止；采集协程捕获 Throwable 并继续抛出 CancellationException；结束资料在 Dispatchers.IO 写入，IOException 转为 AppFailure；采集页面入口捕获 AppFailure。
 - 主机测试：18 项通过、3 项跳过、0 失败，其中 NativeProgressTest 2 项覆盖恢复轮次与 stale 完成条件。设备测试：MigrationEvidenceTest 3 项 0.448 秒、DataUiEvidenceTest 1 项 47.505 秒通过。Lint 0 errors、71 warnings、2 hints。
 - 未运行：真实采集的停止、八分钟到期、账号移除三种条件，诊断开关打开后的资料写入量，损坏进度重建与现场 blocked 诊断。设备无障碍服务未启用，需要用户授权与抖音前台操作。推送 commit 6ca945c 后 Android CI 通过。
+
+## 2026-11-24 P3 抖音范围、候选字段与物流历史
+
+- 结束标志扩展为九种文本，没有平台结束标志时保持 PARTIAL；“全部”标签未提供选中状态时把 scope-selection 标为 blocked，完整范围保持未确认。
+- 已签收订单仍要求包含年份的下单时间与普通配送依据；缺少时保留 missing 或 excluded 原因。物流正文按“展开”节点循环展开，最多 12 次。
+- 待发货范围决定：抖音待发货订单纳入导入范围，要求真实订单编号、订单状态与普通配送依据，不要求下单时间，不读取物流。
+- 主机测试 18 项通过、3 项跳过；本次只扩展结束标志，没有新增真实页面样本。
+- 未完成：平台明确列表结束与“全部”选中状态的现场证据、两笔候选的年份与配送依据、完整物流历史到底、跨年、在途与多包裹样本、两轮真实采集。推送 commit de843ba 后 Android CI 通过。
+
+## 2026-11-24 P4 京东与淘宝真实响应回放
+
+- 京东：JdOrderEvidenceTest#replayRealOrders 使用 T09 真实响应与 T06 期望，1 项通过，0.088 秒；排除编号集合与期望一致。
+- 淘宝：TaobaoOrderEvidenceTest#replayRealOrders 使用 T09 真实 MTOP 响应与 T07 classic 期望，1 项通过，0.089 秒；最后一页 complete 为真，排除与保留集合一致。
+- 数据库清理回放未运行：T09 before.db 已经清理过，缺少清理前的存量排除行，两项回放报告“副本需要实际存量排除样本”，不计入产品结果。
+- 未运行：京东多页实时读取与列表结束、淘宝 nextPageIndex 与 hasMore 实时分页、登录失效与安全验证、当前待发货、充值、即时配送与服务订单样本。
