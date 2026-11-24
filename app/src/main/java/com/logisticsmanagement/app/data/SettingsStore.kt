@@ -12,6 +12,7 @@ import kotlinx.serialization.json.Json
 data class AppSettings(
     val backgroundEnabled: Boolean = false,
     val nativeJevEnabled: Boolean = false,
+    val nativeEvidenceVerbose: Boolean = false,
 )
 
 class SettingsStore(context: Context) {
@@ -27,6 +28,7 @@ class SettingsStore(context: Context) {
     }
     fun observe(): Flow<AppSettings> = state.asStateFlow()
     suspend fun get(): AppSettings = state.value
+    fun current(): AppSettings = state.value
     suspend fun save(settings: AppSettings) {
         check(preferences.edit().putString("settings", Json.encodeToString(settings)).commit())
         state.value = settings

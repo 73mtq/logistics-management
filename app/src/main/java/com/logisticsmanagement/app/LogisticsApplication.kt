@@ -3,6 +3,7 @@ package com.logisticsmanagement.app
 import android.app.Application
 import androidx.webkit.WebViewFeature
 import com.logisticsmanagement.app.model.AccountState
+import com.logisticsmanagement.app.platform.NativeEvidenceStore
 import com.logisticsmanagement.app.model.AppFailure
 import com.logisticsmanagement.app.model.Platform
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,7 @@ class LogisticsApplication : Application() {
         applicationScope.launch {
             container.repository.recoverInterruptedSyncs()
             container.repository.normalizeDouyinCaptureModes()
+            NativeEvidenceStore.cleanup(filesDir)
             recoverNativeProgress()
             container.platforms.cleanupRemovedProfiles()
             container.syncCoordinator.updateSchedules()

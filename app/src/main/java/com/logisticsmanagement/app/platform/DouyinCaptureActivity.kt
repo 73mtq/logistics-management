@@ -1,5 +1,6 @@
 package com.logisticsmanagement.app.platform
 
+import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
@@ -39,6 +40,19 @@ class DouyinCaptureActivity : ComponentActivity() {
         intent.getStringExtra("remoteOrderId")?.let { content.addView(TextView(this).apply { text = "目标订单编号：$it"; textSize = 16f }) }
         content.addView(status)
         content.addView(connection)
+        val rebuild = Button(this).apply {
+            text = "重建采集进度"
+            visibility = View.GONE
+            minHeight = (48 * resources.displayMetrics.density).toInt()
+            setOnClickListener {
+                AlertDialog.Builder(this@DouyinCaptureActivity)
+                    .setMessage("重建会保留原进度文件副本；确认后从新的采集开始。")
+                    .setPositiveButton("重建") { _, _ -> rebuildProgress() }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+        }
+        content.addView(rebuild)
         fun action(label: String, block: () -> Unit) {
             content.addView(Button(this).apply { text = label; minHeight = (48 * resources.displayMetrics.density).toInt(); setOnClickListener { block() } })
         }
@@ -74,20 +88,41 @@ class DouyinCaptureActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch {
-            container.ready.await()
-            val id = intent.getStringExtra("accountId") ?: throw AppFailure("没有提供抖音账号", FailureKind.CONFIGURATION)
-            account = container.repository.getAccount(id)?.takeUnless { it.deleted }
-                ?: throw AppFailure("抖音账号已移除", FailureKind.CONFIGURATION)
-            require(account?.platform == Platform.DOUYIN)
             try {
-                container.syncCoordinator.nativeProgressStore.read(checkNotNull(account))?.let { status.text = it.message() }
-            } catch (failure: AppFailure) { status.text = failure.message }
-            DouyinCaptureController.status.collect { value ->
+                container.ready.await()
+                val id = intent.getStringExtra("accountId") ?: throw AppFailure("没有提供抖音账号", FailureKind.CONFIGURATION)
+                account = container.repository.getAccount(id)?.takeUnless { it.deleted }
+                    ?: throw AppFailure("抖音账号已移除", FailureKind.CONFIGURATION)
+                require(account?.platform == Platform.DOUYIN)
                 try {
-                    val saved = if (DouyinCaptureController.activeAccount() == null) container.syncCoordinator.nativeProgressStore.read(checkNotNull(account)) else null
-                    status.text = saved?.message() ?: value
-                } catch (failure: AppFailure) { status.text = failure.message }
+                    container.syncCoordinator.nativeProgressStore.read(checkNotNull(account))?.let { status.text = it.message() }
+                } catch (failure: AppFailure) {
+                    status.text = failure.message
+                    rebuild.visibility = View.VISIBLE
+                }
+                DouyinCaptureController.status.collect { value ->
+                    try {
+                        val saved = if (DouyinCaptureController.activeAccount() == null) container.syncCoordinator.nativeProgressStore.read(checkNotNull(account)) else null
+                        status.text = saved?.message() ?: value
+                    } catch (failure: AppFailure) {
+                        status.text = failure.message
+                        rebuild.visibility = View.VISIBLE
+                    }
+                }
+            } catch (failure: AppFailure) {
+                status.text = failure.message
+                rebuild.visibility = View.VISIBLE
             }
+        }
+    }
+
+    private fun rebuildProgress() {
+        val selected = account ?: return
+        lifecycleScope.launch {
+            try {
+                val file = container.syncCoordinator.nativeProgressStore.rebuild(selected)
+                status.text = if (file == null) "没有可重建的采集进度" else "采集进度已重建，原文件保留为 ${file.name}；请开始新一轮采集"
+            } catch (failure: AppFailure) { status.text = failure.message }
         }
     }
 }

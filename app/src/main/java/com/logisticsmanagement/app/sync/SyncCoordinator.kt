@@ -52,7 +52,7 @@ class SyncCoordinator(
     }
 
     internal suspend fun captureNativeAccount(id: String, captureId: String, scans: ReceiveChannel<NativeScan>,
-        timeoutMillis: Long, onSession: (NativeOrderImportSession) -> Unit, onFinished: (NativeOrderImportSession) -> Unit,
+        timeoutMillis: Long, onSession: (NativeOrderImportSession) -> Unit, onFinished: suspend (NativeOrderImportSession) -> Unit,
         pagination: Boolean = false, resume: Boolean = false, terminationReason: () -> String = { "采集已停止" }) = coroutineScope {
         awaitInitialization()
         val lock = locks.computeIfAbsent(id) { Mutex() }
@@ -90,8 +90,8 @@ class SyncCoordinator(
             onSession(session)
             val completed = withTimeoutOrNull(timeoutMillis) { for (scan in scans) session.accept(scan); true }
             withContext(NonCancellable) {
-                runProgress?.finish(if (completed == null) "本次采集达到执行期限" else if (runProgress.value.complete) "本轮采集已完成" else "采集未完成，请继续采集")
-                val complete = completed == true && runProgress?.value?.complete == true
+                val complete = completed == true && runProgress?.complete() == true
+                runProgress?.finishRound(if (completed == null) "本次采集达到执行期限" else if (complete) "本轮采集已完成" else "采集未完成，请继续采集")
                 repository.setSyncState(id, if (complete) AccountState.READY else AccountState.PARTIAL, if (complete) null else session.message(),
                     if (complete) System.currentTimeMillis() else null)
                 report(SyncProgress(id, if (complete) SyncStage.COMPLETED else SyncStage.PARTIAL, session.totals.inserted + session.totals.updated,
@@ -326,6 +326,7 @@ class SyncCoordinator(
         locks.computeIfAbsent(id) { Mutex() }.withLock {
             platforms.deleteAccountProfile(account)
             credentials.deleteAccount(id)
+            nativeProgressStore.delete(id)
         }
     }
 

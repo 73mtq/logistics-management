@@ -28,6 +28,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.channels.Channel
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 import kotlin.coroutines.resume
@@ -204,6 +205,7 @@ class DouyinCaptureService : AccessibilityService() {
     private var sequence = 0
     private var directory: File? = null
     private var evidenceAccount: Account? = null
+    private var startedAt = 0L
     private val recentPages = ArrayDeque<NativePage>()
     private var eventSequence = 0
     private var eventChannel: Channel<NativeEventEvidence>? = null
@@ -266,12 +268,16 @@ class DouyinCaptureService : AccessibilityService() {
                         }
                     },
                     onFinished = { value ->
-                        target.writeText(container.credentials.encrypt(value.evidence()))
+                        withContext(Dispatchers.IO) {
+                            try { target.writeText(container.credentials.encrypt(value.evidence())) }
+                            catch (failure: IOException) { throw AppFailure("采集资料无法保存", FailureKind.SERVICE_ERROR) }
+                        }
                         if (pagination) DouyinCaptureController.report(value.message())
                     }, pagination = pagination, resume = resume, terminationReason = { DouyinCaptureController.terminationReason })
-            } catch (failure: AppFailure) {
+            } catch (failure: Throwable) {
                 DouyinCaptureController.stop()
-                DouyinCaptureController.report(checkNotNull(failure.message))
+                DouyinCaptureController.report(failure.message ?: "采集已停止")
+                if (failure is CancellationException) throw failure
             } finally {
                 if (DouyinCaptureController.captureId == captureId && DouyinCaptureController.account != null) DouyinCaptureController.stop()
             }
@@ -280,6 +286,7 @@ class DouyinCaptureService : AccessibilityService() {
 
     internal suspend fun awaitOrdersFinished() { orderJob?.join(); navigationJob?.join(); eventWriter?.join() }
     internal suspend fun paginationEvidence(value: JsonElement) {
+        if (!diagnosticsEnabled()) return
         val name = "pagination-${navigationSequence++.toString().padStart(6, '0')}.enc"
         val target = File(checkNotNull(directory), name)
         val credentials = (application as LogisticsApplication).container.credentials
@@ -319,44 +326,61 @@ class DouyinCaptureService : AccessibilityService() {
         checkMainThread()
         directory = File(filesDir, "native-entry-evidence/$captureId").apply { check(mkdirs()) }
         evidenceAccount = account
+        startedAt = System.currentTimeMillis()
         sequence = 0
         recentPages.clear()
         eventSequence = 0
         actionSequence = 0
         navigationSequence = 0
-        val channel = Channel<NativeEventEvidence>(Channel.UNLIMITED)
+        cleanupEvidence()
+        val diagnostics = diagnosticsEnabled()
+        val channel = if (diagnostics) Channel<NativeEventEvidence>(Channel.UNLIMITED) else null
         eventChannel = channel
-        val target = checkNotNull(directory)
-        val credentials = (application as LogisticsApplication).container.credentials
-        eventWriter = scope.launch(Dispatchers.IO) {
-            for (event in channel) {
-                val file = File(target, "event-${event.sequence.toString().padStart(6, '0')}.enc")
-                val pending = File(file.path + ".pending")
-                pending.writeText(credentials.encrypt(platformJson.encodeToString(event)))
-                check(pending.renameTo(file))
+        if (channel != null) {
+            val target = checkNotNull(directory)
+            val credentials = (application as LogisticsApplication).container.credentials
+            eventWriter = scope.launch(Dispatchers.IO) {
+                for (event in channel) {
+                    val file = File(target, "event-${event.sequence.toString().padStart(6, '0')}.enc")
+                    val pending = File(file.path + ".pending")
+                    pending.writeText(credentials.encrypt(platformJson.encodeToString(event)))
+                    check(pending.renameTo(file))
+                }
             }
         }
     }
+
+    private fun diagnosticsEnabled() = (application as LogisticsApplication).container.settings.current().nativeEvidenceVerbose
+
+    private fun cleanupEvidence() = NativeEvidenceStore.cleanup(filesDir)
 
     internal fun recordEnd(message: String) {
         val account = evidenceAccount ?: return
         val target = directory ?: return
         val container = (application as LogisticsApplication).container
+        val files = target.walkTopDown().filter { it.isFile }.toList()
         val body = buildJsonObject {
             put("captureId", DouyinCaptureController.captureId)
             put("accountId", account.id)
             put("message", message)
             put("capturedAt", System.currentTimeMillis())
             put("scans", sequence)
+            put("files", files.size)
+            put("bytes", files.sumOf { it.length() })
+            put("elapsedMillis", System.currentTimeMillis() - startedAt)
+            put("diagnostics", diagnosticsEnabled())
             put("serviceConnected", DouyinCaptureController.service === this@DouyinCaptureService)
             put("touchExplorationRequested", serviceInfo.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0)
         }.toString()
         File(target, "end.enc").writeText(container.credentials.encrypt(body))
+        cleanupEvidence()
     }
 
-    internal suspend fun captureNow(): NativeScan = checkNotNull(capture(true)) { "采集尚未开始" }
+    internal suspend fun captureNow(): NativeScan =
+        capture(true) ?: throw AppFailure("采集已经停止", FailureKind.CONFIGURATION)
 
-    internal suspend fun captureRefreshed(path: List<Int>): NativeScan = checkNotNull(capture(true, path)) { "采集尚未开始" }
+    internal suspend fun captureRefreshed(path: List<Int>): NativeScan =
+        capture(true, path) ?: throw AppFailure("采集已经停止", FailureKind.CONFIGURATION)
 
     private suspend fun capture(force: Boolean, refreshPath: List<Int>? = null): NativeScan? {
         val requestedAt = SystemClock.elapsedRealtime()
@@ -432,22 +456,21 @@ class DouyinCaptureService : AccessibilityService() {
         val scan = NativeScan(captureId, account.id, sequence++, capturedAt, phase, eventType, eventClassName, recordedWindows, pages, reasons,
             DouyinCaptureController.service === this@DouyinCaptureService, serviceInfo.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0,
             refreshResults, textQueries)
-        withContext(Dispatchers.IO) {
+        if (diagnosticsEnabled()) withContext(Dispatchers.IO) {
             File(targetDirectory, "scan-${scan.sequence.toString().padStart(6, '0')}.enc")
                 .writeText(container.credentials.encrypt(platformJson.encodeToString(scan)))
         }
-        for (page in pages) {
-            container.platforms.rememberCapture(current, CapturedResponse("accessibility", "https://www.douyin.com/", platformJson.encodeToString(page), 200))
-            DouyinCaptureController.receive(page)
-        }
+        for (page in pages) DouyinCaptureController.receive(page)
         orderScans?.takeIf { orderJob?.isActive == true }?.send(scan)
         orderSession?.let { if (!DouyinCaptureController.navigationMode) DouyinCaptureController.report(it.message()) }
-        val timing = buildJsonObject {
-            put("sequence", scan.sequence); put("forced", force)
-            put("waitMillis", enteredAt - requestedAt); put("readMillis", readFinishedAt - readStartedAt)
-            put("saveMillis", SystemClock.elapsedRealtime() - readFinishedAt)
-        }.toString()
-        withContext(Dispatchers.IO) { File(targetDirectory, "timing-${scan.sequence.toString().padStart(6,'0')}.enc").writeText(container.credentials.encrypt(timing)) }
+        if (diagnosticsEnabled()) {
+            val timing = buildJsonObject {
+                put("sequence", scan.sequence); put("forced", force)
+                put("waitMillis", enteredAt - requestedAt); put("readMillis", readFinishedAt - readStartedAt)
+                put("saveMillis", SystemClock.elapsedRealtime() - readFinishedAt)
+            }.toString()
+            withContext(Dispatchers.IO) { File(targetDirectory, "timing-${scan.sequence.toString().padStart(6,'0')}.enc").writeText(container.credentials.encrypt(timing)) }
+        }
         scan
     } } }
 
@@ -528,8 +551,10 @@ class DouyinCaptureService : AccessibilityService() {
             put("target", platformJson.parseToJsonElement(platformJson.encodeToString(anchor)))
             put("touchExplorationRequested", serviceInfo.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0)
         }.toString()
-        val credentials = (application as LogisticsApplication).container.credentials
-        withContext(Dispatchers.IO) { File(targetDirectory, "action-${number.toString().padStart(6, '0')}.enc").writeText(credentials.encrypt(body)) }
+        if (diagnosticsEnabled()) {
+            val credentials = (application as LogisticsApplication).container.credentials
+            withContext(Dispatchers.IO) { File(targetDirectory, "action-${number.toString().padStart(6, '0')}.enc").writeText(credentials.encrypt(body)) }
+        }
         result
     }
 

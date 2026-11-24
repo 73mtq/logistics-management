@@ -85,6 +85,10 @@ internal fun SettingsScreen(container: AppContainer, settings: AppSettings, acco
                     runAction("jevEnabled") { container.settings.save(settings.copy(nativeJevEnabled = checked)) }
                 }
                 Text("Jev 接收公共标签和必要节点结构，需要联网并产生调用费用。账号、订单编号、运单、地址和商品全文保存在本机。", style = MaterialTheme.typography.bodyMedium)
+                SettingsSwitch("记录完整采集诊断资料", settings.nativeEvidenceVerbose, !container.syncCoordinator.hasActiveAccounts()) { checked ->
+                    runAction("evidenceVerbose") { container.settings.save(settings.copy(nativeEvidenceVerbose = checked)) }
+                }
+                Text("开启后保存每轮扫描、动作和耗时资料，保留最近 3 轮并清理超过 7 天的目录；关闭时只保存进度与汇总。", style = MaterialTheme.typography.bodyMedium)
                 OutlinedTextField(value = jevKey, onValueChange = { jevKey = it }, label = { Text(if (jevConfigured) "替换 Jev API key" else "Jev API key") },
                     visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                     singleLine = true, modifier = Modifier.fillMaxWidth())
