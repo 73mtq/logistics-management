@@ -6,6 +6,11 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val releaseStoreFile: String? = System.getenv("RELEASE_STORE_FILE")
+val releaseStorePassword: String? = System.getenv("RELEASE_STORE_PASSWORD")
+val releaseKeyAlias: String? = System.getenv("RELEASE_KEY_ALIAS")
+val releaseKeyPassword: String? = System.getenv("RELEASE_KEY_PASSWORD")
+
 android {
     namespace = "com.logisticsmanagement.app"
     compileSdk = 36
@@ -23,9 +28,20 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    signingConfigs {
+        if (releaseStoreFile != null && releaseStorePassword != null && releaseKeyAlias != null && releaseKeyPassword != null) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 }
