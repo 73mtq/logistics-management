@@ -122,7 +122,7 @@ class SyncCoordinator(
         awaitInitialization()
         var firstFailure: AppFailure? = null
         val now = System.currentTimeMillis()
-        for (account in repository.getAccounts().filter { it.enabled && it.captureMode == CaptureMode.WEB }) {
+        for (account in repository.getAccounts().filter { it.enabled && it.captureMode == CaptureMode.WEB && it.platform != Platform.DOUYIN }) {
             if (automatic && (account.lastAttemptAt?.let { now - it < AUTO_INTERVAL } == true || activeJobs.containsKey(account.id))) continue
             try { syncAccount(account.id, automatic) }
             catch (error: AppFailure) { if (firstFailure == null) firstFailure = error }
@@ -195,6 +195,7 @@ class SyncCoordinator(
     private suspend fun syncableAccount(id: String, automatic: Boolean): Account? {
         val account = repository.getAccount(id) ?: throw AppFailure("账号不存在", FailureKind.CONFIGURATION)
         if (!account.enabled || account.deleted) throw AppFailure("账号已停用", FailureKind.CONFIGURATION)
+        if (account.platform == Platform.DOUYIN) throw AppFailure("抖音账号使用 App 页面采集，请进入采集页面开始", FailureKind.CONFIGURATION)
         if (!automatic) return account
         val recentlyAttempted = account.lastAttemptAt?.let {
             System.currentTimeMillis() - it < AUTO_INTERVAL

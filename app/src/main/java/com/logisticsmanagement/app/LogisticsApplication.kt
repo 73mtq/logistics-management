@@ -24,6 +24,7 @@ class LogisticsApplication : Application() {
         }
         applicationScope.launch {
             container.repository.recoverInterruptedSyncs()
+            container.repository.normalizeDouyinCaptureModes()
             recoverNativeProgress()
             container.platforms.cleanupRemovedProfiles()
             container.syncCoordinator.updateSchedules()

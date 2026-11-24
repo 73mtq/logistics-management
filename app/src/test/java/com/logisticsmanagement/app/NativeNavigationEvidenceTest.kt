@@ -33,6 +33,20 @@ class NativeNavigationEvidenceTest {
                 assertTrue(cards.all { it.row != 0 && it.row != 3 })
                 val page = NativePaginationRules.activePages(listing).single()
                 for (card in cards) {
+                    val location = checkNotNull(DouyinNativeOrders.card(page, card.node)) { "真实商品区域需要结构定位" }
+                    assertEquals(card.row, location.second)
+                    val section = checkNotNull(DouyinNativeOrders.section(page, card.node)) { "真实商品区域需要卡片范围" }
+                    assertTrue(card.row in section.second)
+                }
+                val targetCard = cards.single { it.node.text == target.getValue("title").jsonPrimitive.content }
+                val logistics = page.nodes.firstOrNull { it.visible && DouyinNativeOrders.label(it) == "查看物流" }
+                if (logistics != null) {
+                    val selected = checkNotNull(DouyinNativeOrders.section(page, targetCard.node))
+                    val action = checkNotNull(DouyinNativeOrders.section(page, logistics))
+                    assertEquals(selected.first, action.first)
+                    assertTrue(logistics.path[selected.first.size] in selected.second)
+                }
+                for (card in cards) {
                     assertEquals(NativeActionPurpose.ORDER_DETAIL, NativeActionPolicy.purpose(page, card.node))
                     assertNull(NativeActionPolicy.rejection(page, card.node))
                     val targetNode = page.nodes.filter { NativeActionPolicy.descendant(card.node.path, it.path) && 16 in it.actions &&

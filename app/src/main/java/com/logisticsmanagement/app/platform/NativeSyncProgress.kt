@@ -75,6 +75,10 @@ internal class NativeSyncProgressStore(context: Context, private val credentials
         val value = read(account) ?: return null
         return if (!value.running) value else value.copy(running = false, reason = "上次采集已中断，请继续采集", updatedAt = System.currentTimeMillis()).also(::write)
     }
+    @Synchronized fun stop(account: Account, reason: String) {
+        val value = read(account) ?: return
+        if (value.running) write(value.copy(running = false, reason = reason, updatedAt = System.currentTimeMillis()))
+    }
 }
 
 internal class NativeProgressSession(private val store: NativeSyncProgressStore, initial: NativeSyncProgress,

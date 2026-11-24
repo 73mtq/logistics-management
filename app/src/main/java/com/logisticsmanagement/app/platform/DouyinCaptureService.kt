@@ -2,6 +2,7 @@ package com.logisticsmanagement.app.platform
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
 import android.view.accessibility.AccessibilityManager
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
@@ -11,6 +12,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.logisticsmanagement.app.LogisticsApplication
 import com.logisticsmanagement.app.model.Account
+import com.logisticsmanagement.app.model.AccountState
 import com.logisticsmanagement.app.model.AppFailure
 import com.logisticsmanagement.app.model.FailureKind
 import com.logisticsmanagement.app.model.Platform
@@ -83,6 +85,21 @@ internal data class NativeActionResult(val accepted: Boolean, val reason: String
 internal object DouyinCaptureController {
     const val PACKAGE = "com.ss.android.ugc.aweme"
     var service: DouyinCaptureService? = null
+    private val mutableConnected = MutableStateFlow(false)
+    val connected = mutableConnected.asStateFlow()
+    internal fun attach(service: DouyinCaptureService) { this.service = service; mutableConnected.value = true }
+    internal fun detach(service: DouyinCaptureService) { if (this.service === service) { this.service = null; mutableConnected.value = false } }
+    fun accessibilityEnabled(context: Context): Boolean = context.getSystemService(AccessibilityManager::class.java)
+        .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        .any { it.resolveInfo.serviceInfo.packageName == context.packageName && it.resolveInfo.serviceInfo.name == DouyinCaptureService::class.java.name }
+
+    fun statusText(context: Context): String {
+        val accessibility = if (accessibilityEnabled(context)) "无障碍服务已启用" else "无障碍服务未启用"
+        val connection = if (connected.value) "已连接" else "未连接"
+        val capture = if (activeAccount() != null) "采集中" else "空闲"
+        val touch = if (navigationMode) "触摸模式开" else "触摸模式关"
+        return "${accessibility} · $connection · $capture · $touch"
+    }
     var account: Account? = null
         private set
     private var expiresAt = 0L
@@ -194,8 +211,15 @@ class DouyinCaptureService : AccessibilityService() {
     private var actionSequence = 0
 
     override fun onServiceConnected() {
-        DouyinCaptureController.service = this
+        DouyinCaptureController.attach(this)
         enableCapture(false)
+        val previous = DouyinCaptureController.activeAccount() ?: return
+        DouyinCaptureController.stop("采集服务已重新连接，上一轮采集已停止")
+        val container = (application as LogisticsApplication).container
+        scope.launch {
+            container.syncCoordinator.nativeProgressStore.stop(previous, "采集服务已重新连接，上一轮采集已停止")
+            container.repository.setSyncState(previous.id, AccountState.PARTIAL, "采集服务已重新连接，上一轮采集已停止，请重新开始")
+        }
     }
 
     internal fun enableCapture(enabled: Boolean) {
@@ -315,17 +339,19 @@ class DouyinCaptureService : AccessibilityService() {
     }
 
     internal fun recordEnd(message: String) {
+        val account = evidenceAccount ?: return
+        val target = directory ?: return
         val container = (application as LogisticsApplication).container
         val body = buildJsonObject {
             put("captureId", DouyinCaptureController.captureId)
-            put("accountId", checkNotNull(evidenceAccount).id)
+            put("accountId", account.id)
             put("message", message)
             put("capturedAt", System.currentTimeMillis())
             put("scans", sequence)
             put("serviceConnected", DouyinCaptureController.service === this@DouyinCaptureService)
             put("touchExplorationRequested", serviceInfo.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0)
         }.toString()
-        File(checkNotNull(directory), "end.enc").writeText(container.credentials.encrypt(body))
+        File(target, "end.enc").writeText(container.credentials.encrypt(body))
     }
 
     internal suspend fun captureNow(): NativeScan = checkNotNull(capture(true)) { "采集尚未开始" }
@@ -545,9 +571,14 @@ class DouyinCaptureService : AccessibilityService() {
     }
 
     override fun onInterrupt() { DouyinCaptureController.stop("采集被系统中断") }
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        DouyinCaptureController.detach(this)
+        return super.onUnbind(intent)
+    }
+
     override fun onDestroy() {
         DouyinCaptureController.stop("采集服务连接已结束")
-        DouyinCaptureController.service = null
+        DouyinCaptureController.detach(this)
         scope.cancel()
         super.onDestroy()
     }

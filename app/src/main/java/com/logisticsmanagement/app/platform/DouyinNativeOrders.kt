@@ -155,15 +155,50 @@ internal object DouyinNativeOrders {
         }?.let { NativeFieldEvidence("ordinaryCarrier", it.groupValues[1], page.windowId, node.path, sequence) }
     }
 
+    internal val ORDER_STATUSES = setOf("已签收", "交易成功", "交易完成", "交易关闭", "已关闭", "已取消", "已退款", "待发货", "待收货", "待收货/使用", "待付款", "待评价", "退款成功", "充值成功", "服务完成", "待使用", "退款中", "售后中")
+
     fun selectable(page: NativePage, anchor: NativeNode) = isList(page) && anchor.text.isNotBlank() && label(anchor) !in navigation &&
-        anchor.text.length >= 2 && anchor.path.size >= 15
+        anchor.text.length >= 2 && card(page, anchor) != null
 
     fun card(page: NativePage, anchor: NativeNode): Pair<List<Int>, Int>? {
-        if (!isList(page) || anchor.path.size < 15) return null
-        val prefix = anchor.path.take(14)
-        val index = anchor.path[14]
-        return prefix to index
+        if (!isList(page)) return null
+        val list = listFor(page, anchor) ?: return null
+        if (anchor.path.size <= list.path.size) return null
+        return list.path to anchor.path[list.path.size]
     }
+
+    fun section(page: NativePage, anchor: NativeNode): Pair<List<Int>, IntRange>? {
+        if (!isList(page)) return null
+        val list = listFor(page, anchor) ?: return null
+        val base = list.path.size
+        val row = anchor.path.getOrNull(base) ?: return null
+        val rows = page.nodes.filter { it.visible && it.path.size > base && it.path.take(base) == list.path }
+            .groupBy { it.path[base] }
+        val headers = rows.filterValues { values -> values.any { ORDER_STATUSES.contains(label(it)) } }.keys.sorted()
+        val start = headers.lastOrNull { it <= row } ?: return null
+        val end = (headers.firstOrNull { it > row } ?: ((rows.keys.maxOrNull() ?: row) + 1)) - 1
+        if (end < row) return null
+        return list.path to (start..end)
+    }
+
+    fun cardDiagnostics(page: NativePage, anchor: NativeNode): String {
+        val list = listFor(page, anchor) ?: return "未找到包含该节点的纵向列表"
+        val base = list.path.size
+        val row = anchor.path.getOrNull(base) ?: return "节点路径不在列表内"
+        val rows = page.nodes.filter { it.visible && it.path.size > base && it.path.take(base) == list.path }
+            .groupBy { it.path[base] }
+        val rowNodes = rows[row].orEmpty()
+        val statusRows = rows.count { (_, values) -> values.any { ORDER_STATUSES.contains(label(it)) } }
+        val images = rowNodes.count { it.className.contains("Image") && it.bounds.size == 4 &&
+            it.bounds[2] - it.bounds[0] >= 80 && it.bounds[3] - it.bounds[1] >= 80 }
+        val titles = rowNodes.count { it.text.length in 2..200 && it.className.contains("Text") }
+        return "列表路径 ${list.path}，行数 ${rows.size}，状态行数 $statusRows，图片数 $images，候选标题数 $titles"
+    }
+
+    private fun listFor(page: NativePage, anchor: NativeNode): NativeNode? = page.nodes.filter { node ->
+        node.visible && node.scrollable && !node.className.contains("Horizontal") &&
+            anchor.path.size > node.path.size && anchor.path.take(node.path.size) == node.path
+    }.maxByOrNull { it.path.size }
 
     fun cardHash(page: NativePage, prefix: List<Int>, index: Int): String {
         val values = page.nodes.filter { it.visible && it.path.size > prefix.size && it.path.take(prefix.size) == prefix &&

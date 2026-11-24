@@ -12,7 +12,7 @@ import java.security.MessageDigest
 internal data class NativeListCard(val page: NativePage, val node: NativeNode, val row: Int, val fingerprint: String)
 
 internal object NativePaginationRules {
-    private val statuses = setOf("已签收", "交易成功", "交易完成", "交易关闭", "已关闭", "已取消", "已退款", "待发货", "待收货", "待收货/使用", "待付款", "待评价", "退款成功", "充值成功", "服务完成", "待使用", "退款中", "售后中")
+    private val statuses get() = DouyinNativeOrders.ORDER_STATUSES
     fun activePages(scan: NativeScan) = scan.pages.filter { page -> scan.windows.any { it.id == page.windowId && it.active && it.accepted } }
     fun verticalList(page: NativePage) = page.nodes.filter { it.visible && it.enabled && it.scrollable &&
         !it.className.contains("Horizontal") && it.bounds[2] > it.bounds[0] && it.bounds[3] > it.bounds[1] }

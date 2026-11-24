@@ -29,6 +29,8 @@ internal class NativeOrderImportSession(
     private val emitted = mutableMapOf<String, ImportedOrder>()
     private var selectedTitle: String? = null
     private var selectedCard: Triple<List<Int>, Int, String>? = null
+    private var selectedSection: Pair<List<Int>, IntRange>? = null
+    private var cardFailure: String? = null
     private var candidate: NativeOrderCandidate? = null
     private var expectedLogistics: String? = null
     private val ordinaryIds = mutableSetOf<String>()
@@ -99,17 +101,22 @@ internal class NativeOrderImportSession(
             page.nodes.firstOrNull { it.visible && it.path.take(anchor.path.size) == anchor.path && DouyinNativeOrders.selectable(page, it) } else null
         if (selected != null) {
             val card = DouyinNativeOrders.card(page, selected)
+            val section = DouyinNativeOrders.section(page, selected)
             val signature = card?.let { Triple(it.first, it.second, DouyinNativeOrders.cardHash(page, it.first, it.second)) }
-            if (selectedTitle == selected.text && selectedCard == signature) return
+            if (selectedTitle == selected.text && selectedCard == signature && selectedSection == section) return
             selectedTitle = selected.text
             selectedCard = signature
+            selectedSection = section
+            cardFailure = if (card == null || section == null) DouyinNativeOrders.cardDiagnostics(page, selected) else null
             fields.add(NativeFieldEvidence("selectedTitle", selected.text, page.windowId, selected.path, -1))
             candidate = null
             expectedLogistics = null
         } else if (DouyinNativeOrders.label(anchor) == "查看物流" && DouyinNativeOrders.isList(page)) {
             val card = selectedCard ?: return
-            val location = DouyinNativeOrders.card(page, anchor) ?: return
-            if (location.first == card.first && location.second == card.second + 2 &&
+            val section = selectedSection ?: return
+            val location = DouyinNativeOrders.section(page, anchor) ?: return
+            val row = anchor.path.getOrNull(card.first.size) ?: return
+            if (location.first == card.first && section.first == card.first && row in section.second &&
                 DouyinNativeOrders.cardHash(page, card.first, card.second) == card.third) expectedLogistics = candidate?.remoteId
         } else if (DouyinNativeOrders.label(anchor) == "查看物流" && candidate != null &&
             page.nodes.any { it.visible && DouyinNativeOrders.label(it) == "订单编号" }) {
@@ -122,6 +129,7 @@ internal class NativeOrderImportSession(
         check(scan.accountId == accountId && scan.captureId == captureId)
         check(scan.pages.all { it.packageName == DouyinCaptureController.PACKAGE && it.accountId == accountId && it.captureId == captureId && it.reader == "service" })
         if (paused) { captureNavigation(scan); acceptedSequence = scan.sequence; return }
+        cardFailure?.let { message -> runProgress?.blocked("card", message); cardFailure = null }
         val prompts = scan.pages.flatMap { page -> page.nodes.filter { it.visible }.map(DouyinNativeOrders::label) }
         if (prompts.any { it in setOf("请先登录", "登录后查看订单", "请登录后查看订单") })
             throw AppFailure("抖音页面要求登录，请在官方App完成登录", FailureKind.NEEDS_LOGIN)

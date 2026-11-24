@@ -29,6 +29,7 @@ interface LogisticsDao {
     suspend fun setSyncState(id: String, state: AccountState, error: String?, lastSyncedAt: Long?): Int
     @Query("UPDATE Account SET lastAttemptAt = :time WHERE id = :id AND deleted = 0") suspend fun recordSyncAttempt(id: String, time: Long)
     @Query("UPDATE Account SET state = 'PARTIAL', error = '上次更新已中断，请重新更新' WHERE state = 'SYNCING' AND deleted = 0") suspend fun recoverInterruptedSyncs()
+    @Query("UPDATE Account SET captureMode = 'APP_PAGE' WHERE platform = 'DOUYIN' AND captureMode = 'WEB' AND deleted = 0") suspend fun normalizeDouyinCaptureModes(): Int
     @Query("SELECT * FROM Shipment ORDER BY updatedAt DESC") fun observeShipments(): Flow<List<Shipment>>
     @Query("SELECT * FROM Shipment ORDER BY updatedAt DESC") suspend fun shipments(): List<Shipment>
     @Query("SELECT * FROM Shipment WHERE id = :id") suspend fun shipment(id: String): Shipment?

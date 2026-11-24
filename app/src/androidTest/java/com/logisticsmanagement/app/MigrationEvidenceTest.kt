@@ -2,6 +2,10 @@ package com.logisticsmanagement.app
 
 import android.database.sqlite.SQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.logisticsmanagement.app.data.LogisticsRepository
+import com.logisticsmanagement.app.model.CaptureMode
+import com.logisticsmanagement.app.model.Platform
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -58,6 +62,30 @@ class MigrationEvidenceTest {
                 put("nonemptyNotesSamples", before.getValue("Shipment").count { !it["notes"].isNullOrBlank() })
                 put("archivedSamples", before.getValue("Shipment").count { it["archived"] == "1" })
                 put("aliasSamples", before.getValue("ShipmentAlias").size)
+            }.toString())
+        } finally { database.close() }
+    }
+
+    @Test fun normalizeDouyinModesAfterRealMigration(): Unit = runBlocking {
+        val directory = T14Evidence.directory("douyin-mode")
+        val name = T14Evidence.copyDatabase("schema1Path", "douyin")
+        val database = T14Evidence.open(name)
+        try {
+            val repository = LogisticsRepository(database)
+            val before = repository.getAccounts()
+            val pending = before.filter { it.platform == Platform.DOUYIN && !it.deleted }
+            assertTrue("真实迁移副本需要未删除的抖音账号", pending.isNotEmpty())
+            assertTrue("迁移后的抖音账号默认为WEB", pending.all { it.captureMode == CaptureMode.WEB })
+            val updated = repository.normalizeDouyinCaptureModes()
+            val after = repository.getAccounts()
+            assertEquals("抖音账号全部转为App页面", pending.size, updated)
+            assertTrue(after.filter { it.platform == Platform.DOUYIN && !it.deleted }.all { it.captureMode == CaptureMode.APP_PAGE })
+            assertEquals("已删除抖音账号保持原值", before.filter { it.platform == Platform.DOUYIN && it.deleted }, after.filter { it.platform == Platform.DOUYIN && it.deleted })
+            assertEquals("其他平台账号保持原值", before.filter { it.platform != Platform.DOUYIN }, after.filter { it.platform != Platform.DOUYIN })
+            assertEquals(before.size, after.size)
+            File(directory, "result.json").writeText(buildJsonObject {
+                put("normalized", updated)
+                put("douyinAccounts", after.count { it.platform == Platform.DOUYIN })
             }.toString())
         } finally { database.close() }
     }

@@ -35,8 +35,10 @@ class DouyinCaptureActivity : ComponentActivity() {
             textSize = 16f
         })
         status = TextView(this).apply { textSize = 16f; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        val connection = TextView(this).apply { textSize = 14f }
         intent.getStringExtra("remoteOrderId")?.let { content.addView(TextView(this).apply { text = "目标订单编号：$it"; textSize = 16f }) }
         content.addView(status)
+        content.addView(connection)
         fun action(label: String, block: () -> Unit) {
             content.addView(Button(this).apply { text = label; minHeight = (48 * resources.displayMetrics.density).toInt(); setOnClickListener { block() } })
         }
@@ -65,6 +67,12 @@ class DouyinCaptureActivity : ComponentActivity() {
         }
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
+        lifecycleScope.launch {
+            while (true) {
+                connection.text = DouyinCaptureController.statusText(this@DouyinCaptureActivity)
+                kotlinx.coroutines.delay(1_000)
+            }
+        }
         lifecycleScope.launch {
             container.ready.await()
             val id = intent.getStringExtra("accountId") ?: throw AppFailure("没有提供抖音账号", FailureKind.CONFIGURATION)

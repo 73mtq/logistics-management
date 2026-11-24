@@ -411,25 +411,7 @@ internal class DouyinAdapter(private val registry: PlatformRegistry) : PlatformA
     override val allowedOrigins = setOf("https://www.douyin.com", "https://mall.douyin.com")
 
     override suspend fun sync(account: Account, onBatch: suspend (OrderBatch) -> Unit) = withContext(Dispatchers.Main.immediate) {
-        val session = PlatformWebView(registry.context, account, this@DouyinAdapter, registry.profiles, false)
-        val page = registry.accountSecret(account, "douyin.orderPage")
-        val deadline = SystemClock.elapsedRealtime() + 45_000
-        try {
-            session.load(page ?: orderListUrl)
-            var navigated = false
-            while (SystemClock.elapsedRealtime() < deadline) {
-                val capture = withTimeoutOrNull(1_000) { session.messages.receive() }
-                if (capture != null) {
-                    registry.rememberCapture(account, capture)
-                    if (capture.kind == "response") {
-                        registry.rememberDouyinPage(account, session.currentUrl)
-                        throw AppFailure("抖音订单响应已经采集，当前响应结构需要通过真实账号确认", FailureKind.UNSUPPORTED_RESPONSE)
-                    }
-                }
-                if (!navigated && session.currentUrl.isNotBlank()) { session.evaluate(CaptureScripts.douyinOrders); navigated = true }
-            }
-            throw AppFailure("请打开抖音来源网页，完成登录并进入官方订单页面以采集响应", FailureKind.NEEDS_VERIFICATION)
-        } finally { session.close() }
+        throw AppFailure("抖音订单通过官方 App 页面采集，不支持网页同步", FailureKind.CONFIGURATION)
     }
 
     override suspend fun tracking(account: Account, source: SourceRef): ImportedShipment {

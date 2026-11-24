@@ -19,6 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.logisticsmanagement.app.AppContainer
 import com.logisticsmanagement.app.data.AppSettings
 import com.logisticsmanagement.app.model.*
+import com.logisticsmanagement.app.platform.DouyinCaptureController
 import com.logisticsmanagement.app.platform.NativeSemanticJudge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -57,18 +58,16 @@ internal fun SettingsScreen(container: AppContainer, settings: AppSettings, acco
                             }
                         }
                         if (account.platform == Platform.DOUYIN) {
-                            SettingsSwitch("通过抖音 App 页面采集", account.captureMode == CaptureMode.APP_PAGE, account.state != AccountState.SYNCING) { checked ->
-                                runAction("captureMode_${account.id}") {
-                                    val current = checkNotNull(container.repository.getAccount(account.id))
-                                    container.repository.saveAccount(current.copy(captureMode = if (checked) CaptureMode.APP_PAGE else CaptureMode.WEB, lastAttemptAt = null))
-                                    container.syncCoordinator.updateSchedules()
-                                }
-                            }
-                            if (account.captureMode == CaptureMode.APP_PAGE) Text("开启无障碍权限后，在抖音前台读取商城订单和物流页面。", style = MaterialTheme.typography.bodyMedium)
+                            val connected by DouyinCaptureController.connected.collectAsStateWithLifecycle()
+                            val accessibility = DouyinCaptureController.accessibilityEnabled(context)
+                            Text(if (!accessibility) "无障碍服务未启用：进入采集页面后可以打开系统设置完成授权。"
+                                else if (!connected) "无障碍服务已启用但尚未连接：在系统设置中关闭再开启该服务，然后回到采集页面。"
+                                else "抖音采集服务已连接。", style = MaterialTheme.typography.bodyMedium)
+                            Text("抖音使用官方 App 页面采集；开启无障碍权限后，在抖音前台读取商城订单和物流页面。", style = MaterialTheme.typography.bodyMedium)
                         }
-                        ActionButton(if (account.captureMode == CaptureMode.APP_PAGE) "采集商城订单" else "登录账号", false) { openAccountLogin(container, context, account) }
+                        ActionButton(if (account.platform == Platform.DOUYIN) "采集商城订单" else "登录账号", false) { openAccountLogin(container, context, account) }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (account.captureMode == CaptureMode.WEB) TextButton(onClick = {
+                            if (account.platform != Platform.DOUYIN) TextButton(onClick = {
                                 runAction("account_${account.id}") { container.syncCoordinator.syncAccount(account.id) }
                             }, enabled = account.enabled && busy["account_${account.id}"] != true && account.state != AccountState.SYNCING, modifier = Modifier.sizeIn(minHeight = 48.dp)) { Text("更新账号") }
                             TextButton(onClick = { removingAccount = account }, modifier = Modifier.sizeIn(minHeight = 48.dp)) { Text("移除账号", color = MaterialTheme.colorScheme.error) }
