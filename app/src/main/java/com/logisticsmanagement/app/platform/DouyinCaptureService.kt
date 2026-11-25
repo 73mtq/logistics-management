@@ -27,12 +27,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.channels.Channel
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -119,19 +122,29 @@ internal object DouyinCaptureController {
     val page = mutablePage.asStateFlow()
     val status = mutableStatus.asStateFlow()
 
+    internal data class OcrEvidenceRecord(val capturedAt: Long, val text: String, val lines: List<OcrLine>, val jpeg: ByteArray?)
+    private val ocrRecords = ArrayDeque<OcrEvidenceRecord>()
+    @Synchronized internal fun recordOcr(value: OcrEvidenceRecord) {
+        ocrRecords.addLast(value)
+        while (ocrRecords.size > 8) ocrRecords.removeFirst()
+    }
+    @Synchronized internal fun ocrEvidence(): List<OcrEvidenceRecord> = ocrRecords.toList()
+    @Synchronized internal fun clearOcrEvidence() { ocrRecords.clear() }
+
     var navigationMode: Boolean = false
         private set
     internal var terminationReason: String = ""
         private set
     fun start(account: Account) = startPaginationWithEvidence(account, UUID.randomUUID().toString(), false)
-    internal fun startPaginationWithEvidence(account: Account, captureId: String, resume: Boolean, timeoutMillis: Long = 8 * 60_000L) =
-        startWithEvidence(account, captureId, timeoutMillis, importOrders = true, pagination = true, resume = resume)
+    internal fun startPaginationWithEvidence(account: Account, captureId: String, resume: Boolean, timeoutMillis: Long = 8 * 60_000L,
+        focusOrderId: String? = null) =
+        startWithEvidence(account, captureId, timeoutMillis, importOrders = true, pagination = true, resume = resume, focusOrderId = focusOrderId)
 
     internal fun startOrdersWithEvidence(account: Account, captureId: String, timeoutMillis: Long = 8 * 60_000L) =
         startWithEvidence(account, captureId, timeoutMillis, true)
 
     internal fun startWithEvidence(account: Account, captureId: String, timeoutMillis: Long = 8 * 60_000L, importOrders: Boolean = false,
-        pagination: Boolean = false, resume: Boolean = false) {
+        pagination: Boolean = false, resume: Boolean = false, focusOrderId: String? = null) {
         val connected = service ?: throw AppFailure("请开启抖音订单采集的无障碍权限", FailureKind.CONFIGURATION)
         require(account.platform == Platform.DOUYIN && account.enabled && !account.deleted)
         require(captureId.matches(Regex("[A-Za-z0-9-]+")) && timeoutMillis > 0)
@@ -145,7 +158,7 @@ internal object DouyinCaptureController {
         mutablePage.value = null
         navigationMode = false
         mutableStatus.value = "正在读取抖音页面，请打开商城订单"
-        if (importOrders) connected.startOrders(account, captureId, timeoutMillis, pagination, resume)
+        if (importOrders) connected.startOrders(account, captureId, timeoutMillis, pagination, resume, focusOrderId)
         connected.enableCapture(true)
     }
 
@@ -256,7 +269,8 @@ class DouyinCaptureService : AccessibilityService() {
         }
     }
 
-    internal fun startOrders(account: Account, captureId: String, timeoutMillis: Long, pagination: Boolean = false, resume: Boolean = false) {
+    internal fun startOrders(account: Account, captureId: String, timeoutMillis: Long, pagination: Boolean = false, resume: Boolean = false,
+        focusOrderId: String? = null) {
         check(orderJob?.isActive != true)
         orderSession = null
         val channel = Channel<NativeScan>(Channel.UNLIMITED)
@@ -269,7 +283,7 @@ class DouyinCaptureService : AccessibilityService() {
                     onSession = { session ->
                         orderSession = session
                         if (pagination) navigationJob = scope.launch {
-                            try { NativePaginationRunner(this@DouyinCaptureService, account, session).run(); channel.close() }
+                            try { NativePaginationRunner(this@DouyinCaptureService, account, session, focusOrderId).run(); channel.close() }
                             catch (failure: AppFailure) { channel.close(failure) }
                         }
                     },
@@ -382,7 +396,7 @@ class DouyinCaptureService : AccessibilityService() {
         cleanupEvidence()
     }
 
-    internal suspend fun captureScreen(): OcrScreen? = suspendCancellableCoroutine { continuation ->
+    internal suspend fun captureScreen(record: Boolean = false): OcrScreen? = suspendCancellableCoroutine { continuation ->
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             continuation.resume(null)
             return@suspendCancellableCoroutine
@@ -404,7 +418,16 @@ class DouyinCaptureService : AccessibilityService() {
                             val box = line.boundingBox ?: return@mapNotNull null
                             OcrLine(line.text, listOf(box.left, box.top, box.right, box.bottom))
                         } }
-                        if (continuation.isActive) continuation.resume(OcrScreen(result.text, lines))
+                        val screen = OcrScreen(result.text, lines)
+                        if (record && diagnosticsEnabled()) {
+                            scope.launch(Dispatchers.Default) {
+                                val bytes = ByteArrayOutputStream()
+                                if (bitmap.compress(Bitmap.CompressFormat.JPEG, 80, bytes))
+                                    DouyinCaptureController.recordOcr(DouyinCaptureController.OcrEvidenceRecord(
+                                        System.currentTimeMillis(), screen.text, lines, bytes.toByteArray()))
+                            }
+                        }
+                        if (continuation.isActive) continuation.resume(screen)
                     }
                     .addOnFailureListener {
                         client.close()
@@ -415,6 +438,178 @@ class DouyinCaptureService : AccessibilityService() {
                 if (continuation.isActive) continuation.resume(null)
             }
         })
+    }
+
+    private fun screenTextLine(screen: OcrScreen, target: String): OcrLine? {
+        val compact = target.replace(Regex("\\s+"), "")
+        return screen.lines.firstOrNull { it.bounds.size == 4 && it.text.replace(Regex("\\s+"), "") == compact }
+            ?: screen.lines.firstOrNull { it.bounds.size == 4 && it.text.replace(Regex("\\s+"), "").contains(compact) &&
+                it.text.length <= compact.length + 12 }
+    }
+
+    internal suspend fun tapScreenText(target: String): NativeActionResult = withContext(Dispatchers.Main.immediate) {
+        val allowed = setOf("更多", "查看物流", "展开全部物流信息", "查看更多物流信息")
+        if (target !in allowed) return@withContext NativeActionResult(false, "该文字不在允许点击的读取入口内", "gesture")
+        if (DouyinCaptureController.navigationMode) return@withContext NativeActionResult(false, "当前处于正常触摸导航", "gesture")
+        val captureId = DouyinCaptureController.captureId
+        val account = DouyinCaptureController.activeAccount()
+            ?: return@withContext NativeActionResult(false, "当前没有进行中的采集", "gesture")
+        val foreground = rootInActiveWindow?.packageName?.toString().orEmpty()
+        if (foreground != DouyinCaptureController.PACKAGE)
+            return@withContext NativeActionResult(false, "当前前台不是抖音：${foreground.ifBlank { "未知" }}", "gesture")
+        var screen = withTimeoutOrNull(8_000) { captureScreen() }
+            ?: return@withContext NativeActionResult(false, "截图识别超时", "gesture")
+        var found = screenTextLine(screen, target)
+        if (found == null) {
+            delay(600)
+            screen = withTimeoutOrNull(8_000) { captureScreen() }
+                ?: return@withContext NativeActionResult(false, "截图识别超时", "gesture")
+            found = screenTextLine(screen, target)
+        }
+        val line = found ?: return@withContext NativeActionResult(false, "当前页面没有出现“$target”，识别行数 ${screen.lines.size}", "gesture")
+        val requested = serviceInfo.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0
+        requestTouchExploration(false)
+        try {
+            val manager = getSystemService(AccessibilityManager::class.java)
+            val ready = withTimeoutOrNull(1_500) { while (manager.isTouchExplorationEnabled) delay(25); true } == true
+            if (!ready) return@withContext NativeActionResult(false, "系统触摸模式尚未解除", "gesture")
+            val active = rootInActiveWindow?.packageName?.toString().orEmpty()
+            if (active != DouyinCaptureController.PACKAGE) return@withContext NativeActionResult(false, "点击前前台已经变化：${active.ifBlank { "未知" }}", "gesture")
+            val path = Path().apply { moveTo((line.bounds[0] + line.bounds[2]) / 2f, (line.bounds[1] + line.bounds[3]) / 2f) }
+            val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 80)).build()
+            val completed = suspendCancellableCoroutine<Boolean> { continuation ->
+                val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        if (continuation.isActive) continuation.resume(true)
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        if (continuation.isActive) continuation.resume(false)
+                    }
+                }, null)
+                if (!accepted && continuation.isActive) continuation.resume(false)
+            }
+            if (diagnosticsEnabled()) {
+                val body = buildJsonObject {
+                    put("captureId", captureId); put("accountId", account.id); put("action", "TAP_SCREEN_TEXT"); put("text", target)
+                    put("bounds", JsonArray(line.bounds.map(::JsonPrimitive))); put("accepted", completed)
+                    put("capturedAt", System.currentTimeMillis())
+                }.toString()
+                val credentials = (application as LogisticsApplication).container.credentials
+                withContext(Dispatchers.IO) {
+                    File(checkNotNull(directory), "tap-${(actionSequence++).toString().padStart(6, '0')}.enc").writeText(credentials.encrypt(body))
+                }
+            }
+            NativeActionResult(completed, if (completed) "" else "系统取消或拒绝点击手势", "gesture")
+        } finally {
+            if (DouyinCaptureController.captureId == captureId)
+                requestTouchExploration(DouyinCaptureController.activeAccount() != null && requested && !DouyinCaptureController.navigationMode)
+        }
+    }
+
+
+    internal suspend fun tapNode(page: NativePage, node: NativeNode): NativeActionResult = withContext(Dispatchers.Main.immediate) {
+        if (DouyinCaptureController.navigationMode) return@withContext NativeActionResult(false, "当前处于正常触摸导航", "gesture")
+        val captureId = DouyinCaptureController.captureId
+        val account = DouyinCaptureController.activeAccount() ?: return@withContext NativeActionResult(false, "当前没有进行中的采集", "gesture")
+        if (page.accountId != account.id || page.captureId != captureId)
+            return@withContext NativeActionResult(false, "采集账号或采集编号已经变化", "gesture")
+        if (node.bounds.size != 4) return@withContext NativeActionResult(false, "目标范围无效", "gesture")
+        val foreground = rootInActiveWindow?.packageName?.toString().orEmpty()
+        if (foreground != DouyinCaptureController.PACKAGE)
+            return@withContext NativeActionResult(false, "当前前台不是抖音：${foreground.ifBlank { "未知" }}", "gesture")
+        val root = rootInActiveWindow ?: return@withContext NativeActionResult(false, "活动窗口没有根节点", "gesture")
+        val windowBounds = Rect().also(root::getBoundsInScreen)
+        val centerX = (node.bounds[0] + node.bounds[2]) / 2f
+        val centerY = (node.bounds[1] + node.bounds[3]) / 2f
+        if (!windowBounds.contains(centerX.toInt(), centerY.toInt()))
+            return@withContext NativeActionResult(false, "目标范围不在当前官方窗口内", "gesture")
+        val requested = serviceInfo.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0
+        requestTouchExploration(false)
+        try {
+            val manager = getSystemService(AccessibilityManager::class.java)
+            val ready = withTimeoutOrNull(1_500) { while (manager.isTouchExplorationEnabled) delay(25); true } == true
+            if (!ready) return@withContext NativeActionResult(false, "系统触摸模式尚未解除", "gesture")
+            val path = Path().apply { moveTo(centerX, centerY) }
+            val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 80)).build()
+            val completed = suspendCancellableCoroutine<Boolean> { continuation ->
+                val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        if (continuation.isActive) continuation.resume(true)
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        if (continuation.isActive) continuation.resume(false)
+                    }
+                }, null)
+                if (!accepted && continuation.isActive) continuation.resume(false)
+            }
+            if (diagnosticsEnabled()) {
+                val body = buildJsonObject {
+                    put("captureId", captureId); put("accountId", account.id); put("action", "TAP_NODE")
+                    put("bounds", JsonArray(node.bounds.map(::JsonPrimitive))); put("accepted", completed)
+                    put("capturedAt", System.currentTimeMillis())
+                }.toString()
+                val credentials = (application as LogisticsApplication).container.credentials
+                withContext(Dispatchers.IO) {
+                    File(checkNotNull(directory), "tap-${(actionSequence++).toString().padStart(6, '0')}.enc").writeText(credentials.encrypt(body))
+                }
+            }
+            NativeActionResult(completed, if (completed) "" else "系统取消或拒绝点击手势", "gesture")
+        } finally {
+            if (DouyinCaptureController.captureId == captureId)
+                requestTouchExploration(DouyinCaptureController.activeAccount() != null && requested && !DouyinCaptureController.navigationMode)
+        }
+    }
+
+
+    internal suspend fun scrollList(page: NativePage, node: NativeNode, forward: Boolean): NativeActionResult = withContext(Dispatchers.Main.immediate) {
+        if (DouyinCaptureController.navigationMode) return@withContext NativeActionResult(false, "当前处于正常触摸导航", "gesture")
+        val captureId = DouyinCaptureController.captureId
+        val account = DouyinCaptureController.activeAccount() ?: return@withContext NativeActionResult(false, "当前没有进行中的采集", "gesture")
+        if (page.accountId != account.id || page.captureId != captureId)
+            return@withContext NativeActionResult(false, "采集账号或采集编号已经变化", "gesture")
+        if (node.bounds.size != 4) return@withContext NativeActionResult(false, "目标范围无效", "gesture")
+        val foreground = rootInActiveWindow?.packageName?.toString().orEmpty()
+        if (foreground != DouyinCaptureController.PACKAGE)
+            return@withContext NativeActionResult(false, "当前前台不是抖音：${foreground.ifBlank { "未知" }}", "gesture")
+        val height = (node.bounds[3] - node.bounds[1]).toFloat()
+        val x = (node.bounds[0] + node.bounds[2]) / 2f
+        val fromY = if (forward) node.bounds[1] + height * 0.75f else node.bounds[1] + height * 0.25f
+        val toY = if (forward) node.bounds[1] + height * 0.25f else node.bounds[1] + height * 0.75f
+        val requested = serviceInfo.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0
+        requestTouchExploration(false)
+        try {
+            val manager = getSystemService(AccessibilityManager::class.java)
+            val ready = withTimeoutOrNull(1_500) { while (manager.isTouchExplorationEnabled) delay(25); true } == true
+            if (!ready) return@withContext NativeActionResult(false, "系统触摸模式尚未解除", "gesture")
+            val path = Path().apply { moveTo(x, fromY); lineTo(x, toY) }
+            val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 400)).build()
+            val completed = suspendCancellableCoroutine<Boolean> { continuation ->
+                val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        if (continuation.isActive) continuation.resume(true)
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        if (continuation.isActive) continuation.resume(false)
+                    }
+                }, null)
+                if (!accepted && continuation.isActive) continuation.resume(false)
+            }
+            if (diagnosticsEnabled()) {
+                val body = buildJsonObject {
+                    put("captureId", captureId); put("accountId", account.id); put("action", "SCROLL_GESTURE")
+                    put("forward", forward); put("fromY", fromY); put("toY", toY); put("accepted", completed)
+                    put("capturedAt", System.currentTimeMillis())
+                }.toString()
+                val credentials = (application as LogisticsApplication).container.credentials
+                withContext(Dispatchers.IO) {
+                    File(checkNotNull(directory), "tap-${(actionSequence++).toString().padStart(6, '0')}.enc").writeText(credentials.encrypt(body))
+                }
+            }
+            NativeActionResult(completed, if (completed) "" else "系统取消或拒绝滑动手势", "gesture")
+        } finally {
+            if (DouyinCaptureController.captureId == captureId)
+                requestTouchExploration(DouyinCaptureController.activeAccount() != null && requested && !DouyinCaptureController.navigationMode)
+        }
     }
 
     internal suspend fun captureNow(): NativeScan =

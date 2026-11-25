@@ -1,6 +1,7 @@
 package com.logisticsmanagement.app.platform
 
 import com.logisticsmanagement.app.model.*
+import com.logisticsmanagement.app.network.CarrierCodes
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import java.time.Instant
@@ -12,7 +13,7 @@ internal class NativeOrderImportSession(
     private val existing: suspend (String) -> Order?,
     private val save: suspend (String, ImportedOrder) -> IngestResult,
     private val progress: (NativeOrderImportSession) -> Unit,
-    saveLogistics: (suspend (String, String, ImportedShipment) -> Unit)? = null,
+    private val saveLogistics: (suspend (String, String, ImportedShipment) -> Unit)? = null,
     internal val runProgress: NativeProgressSession? = null,
 ) {
     internal var acceptedSequence = -1
@@ -41,9 +42,36 @@ internal class NativeOrderImportSession(
     private var informationPath: List<Int>? = null
     private val navigationDates = mutableListOf<NativeFieldEvidence>()
     private var lastDetailPage: NativePage? = null
+    private var pendingOcr: Pair<OcrLogisticsResult, Int>? = null
     private val dateReadings = mutableMapOf<Pair<String, Long>, MutableSet<Int>>()
 
-    fun invalidateIdentity() { identity = null; candidate = null; expectedLogistics = null; logistics?.reset(); progress(this) }
+    fun invalidateIdentity() { identity = null; candidate = null; expectedLogistics = null; pendingOcr = null; logistics?.reset(); progress(this) }
+
+    suspend fun knownIdentity(value: String) {
+        bind(value)
+        identity = value
+        runProgress?.observe(this)
+    }
+
+    suspend fun registerOrder(order: Order) {
+        runProgress?.discovered(NativeOrderCandidate(order.remoteId, order.title, order.status, order.createdAt,
+            ordinary = true, excluded = false, fields = emptyList()))
+    }
+
+    fun prepareOcrLogistics(remoteId: String) {
+        expectedLogistics = remoteId
+        logistics?.expect(remoteId)
+        ordinaryIds.add(remoteId)
+        candidate = candidate?.copy(ordinary = true)
+    }
+
+    fun acceptOcrLogistics(result: OcrLogisticsResult, readings: Int) {
+        val orderId = expectedLogistics ?: return
+        pendingOcr = result to readings
+        ordinaryIds.add(orderId)
+        candidate = candidate?.copy(ordinary = true)
+        fields.add(NativeFieldEvidence("ordinaryCarrier", result.carrier, -1, emptyList(), -1))
+    }
     fun beginNavigation() {
         navigationIdentity = identity
         navigationTarget = candidate
@@ -198,6 +226,24 @@ internal class NativeOrderImportSession(
                     }
                     missing.remove(order.remoteId)
                 }
+            }
+        }
+        val ocr = pendingOcr
+        if (ocr != null) {
+            val result = ocr.first
+            val orderId = expectedLogistics
+            val target = orderId?.let { existing(it) }
+            if (orderId == null || target == null) {
+                if (orderId != null && missing[orderId].isNullOrEmpty()) missing[orderId] = listOf("目标订单尚未保存")
+            } else {
+                val code = CarrierCodes.resolve(result.carrier)
+                    ?: throw AppFailure("承运商编码尚未支持：${result.carrier}", FailureKind.UNSUPPORTED_RESPONSE)
+                val shipment = ImportedShipment("$code:${result.trackingNumber}", result.trackingNumber, result.carrier, code, result.status,
+                    events = result.events)
+                saveLogistics?.invoke(checkNotNull(identity), orderId, shipment)
+                logistics?.recordOcr(orderId, result, ocr.second)
+                pendingOcr = null
+                missing.remove(orderId)
             }
         }
         val logisticsOrder = expectedLogistics?.let { existing(it) }

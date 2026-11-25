@@ -58,11 +58,14 @@ internal object NativePaginationRules {
 }
 
 internal class NativePaginationRunner(private val service: DouyinCaptureService, private val account: Account,
-    private val session: NativeOrderImportSession) {
+    private val session: NativeOrderImportSession, private val focusOrderId: String? = null) {
     private class NavigationRestart : Exception()
     private val progress = checkNotNull(session.runProgress)
     private val captureId = session.captureId
+    private var focusTitle: String? = null
     private var judge: NativeSemanticJudge? = null
+    private var foregroundPackage = ""
+    private var foregroundSince = 0L
     private suspend fun step(label: String) {
         progress.step(label)
         DouyinCaptureController.report(progress.value.message())
@@ -76,6 +79,16 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
         val scan = service.captureRefreshed(emptyList())
         val applied = withTimeoutOrNull(15_000) { while (session.acceptedSequence < scan.sequence) delay(25); true }
         if (applied != true) throw AppFailure("当前采集资料尚未完成处理", FailureKind.UNSUPPORTED_RESPONSE)
+        val foreground = service.rootInActiveWindow?.packageName?.toString().orEmpty()
+        if (foreground == DouyinCaptureController.PACKAGE) {
+            foregroundPackage = foreground
+            foregroundSince = 0L
+        } else if (foreground != foregroundPackage) {
+            foregroundPackage = foreground
+            foregroundSince = SystemClock.elapsedRealtime()
+        } else if (SystemClock.elapsedRealtime() - foregroundSince > 10_000) {
+            throw AppFailure("前台被其他应用占据：${foreground.ifBlank { "未知" }}", FailureKind.UNSUPPORTED_RESPONSE)
+        }
         return scan
     }
     private suspend fun awaitPage(condition: (NativeScan) -> Boolean): NativeScan {
@@ -86,6 +99,53 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
             delay(350)
         } while (SystemClock.elapsedRealtime() < deadline)
         throw AppFailure("当前页面未提供所需节点：${progress.value.step}", FailureKind.UNSUPPORTED_RESPONSE)
+    }
+    private suspend fun ensureOfficialApp() {
+        if (service.rootInActiveWindow?.packageName?.toString() == DouyinCaptureController.PACKAGE) return
+        val launch = service.packageManager.getLaunchIntentForPackage(DouyinCaptureController.PACKAGE)
+            ?: throw AppFailure("请安装抖音官方App", FailureKind.CONFIGURATION)
+        try {
+            service.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (failure: RuntimeException) {
+            throw AppFailure("无法启动抖音：${failure.message}", FailureKind.CONFIGURATION)
+        }
+        val deadline = SystemClock.elapsedRealtime() + 12_000
+        do {
+            if (service.rootInActiveWindow?.packageName?.toString() == DouyinCaptureController.PACKAGE) return
+            delay(300)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        val current = service.rootInActiveWindow?.packageName?.toString().orEmpty()
+        throw AppFailure("抖音没有进入前台，当前前台：${current.ifBlank { "未知" }}", FailureKind.UNSUPPORTED_RESPONSE)
+    }
+    private suspend fun awaitMaybe(timeoutMillis: Long, condition: (NativeScan) -> Boolean): NativeScan? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        do {
+            val scan = read()
+            if (condition(scan)) return scan
+            delay(300)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        return null
+    }
+    private suspend fun ocrTap(label: String) {
+        repeat(2) { attempt ->
+            val tap = service.tapScreenText(label)
+            if (tap.accepted) return
+            if (attempt == 0) delay(1_500)
+            else throw AppFailure("物流入口无法点击：${tap.reason}", FailureKind.UNSUPPORTED_RESPONSE)
+        }
+    }
+    private fun anyPages(scan: NativeScan) = scan.pages.filter { page -> scan.windows.any { it.id == page.windowId && it.accepted } }
+    private fun anyLabel(scan: NativeScan, label: String): Pair<NativePage, NativeNode>? = anyPages(scan)
+        .flatMap { page -> page.nodes.filter { it.enabled && it.bounds.size == 4 && DouyinNativeOrders.label(it) == label }.map { page to it } }
+        .singleOrNull()
+    private suspend fun awaitAnyLabel(timeoutMillis: Long, label: String): Pair<NativePage, NativeNode>? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        do {
+            val scan = read()
+            anyLabel(scan, label)?.let { return it }
+            delay(300)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        return null
     }
     private fun matches(scan: NativeScan, label: String) = NativePaginationRules.activePages(scan).flatMap { page ->
         page.nodes.filter { it.visible && it.enabled && (it.text == label || it.description == label) }.map { page to it }
@@ -162,6 +222,7 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
     }
     suspend fun run() {
         val container = (service.application as com.logisticsmanagement.app.LogisticsApplication).container
+        focusTitle = focusOrderId?.let { id -> container.repository.getOrders().firstOrNull { it.remoteId == id }?.title }
         if (container.settings.get().nativeJevEnabled) {
             val key = container.credentials.getSecret(NativeSemanticJudge.CREDENTIAL_NAME)?.takeIf { it.isNotBlank() }
                 ?: throw AppFailure("请在设置中配置Jev API key", FailureKind.CONFIGURATION)
@@ -176,25 +237,36 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
         } finally { withContext(NonCancellable + Dispatchers.IO) { judge?.close() } }
     }
     private suspend fun traverse() {
-        step("账号核查")
-        val launch = service.packageManager.getLaunchIntentForPackage(DouyinCaptureController.PACKAGE)
-            ?: throw AppFailure("请安装抖音官方App", FailureKind.CONFIGURATION)
-        if (service.rootInActiveWindow?.packageName?.toString() != DouyinCaptureController.PACKAGE)
-            service.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        step("订单入口")
+        ensureOfficialApp()
         awaitPage { NativePaginationRules.activePages(it).isNotEmpty() }
-        var main = false
-        repeat(8) {
-            if (!main) {
+        var home = false
+        repeat(5) {
+            if (!home) {
                 val scan = read()
-                if (matches(scan, "我").size == 1) main = true else back()
+                home = matches(scan, "商城").isNotEmpty() || matches(scan, "我").isNotEmpty()
+                if (!home) back()
             }
         }
-        if (!main) throw AppFailure("无法定位官方账号入口", FailureKind.UNSUPPORTED_RESPONSE)
-        DouyinCaptureController.markPhase("账号")
-        activate("我", NativeActionPurpose.ACCOUNT)
-        awaitPage { DouyinNativeOrders.identity(it) != null && session.identity != null }
-        step("首页")
-        activate("首页", NativeActionPurpose.HOME)
+        if (!home) throw AppFailure("无法回到抖音首页", FailureKind.UNSUPPORTED_RESPONSE)
+        val known = account.externalIdentity
+        if (known != null) {
+            session.knownIdentity(known)
+        } else {
+            var main = false
+            repeat(8) {
+                if (!main) {
+                    val scan = read()
+                    if (matches(scan, "我").size == 1) main = true else back()
+                }
+            }
+            if (!main) throw AppFailure("无法定位官方账号入口", FailureKind.UNSUPPORTED_RESPONSE)
+            DouyinCaptureController.markPhase("账号")
+            activate("我", NativeActionPurpose.ACCOUNT)
+            awaitPage { DouyinNativeOrders.identity(it) != null && session.identity != null }
+            step("首页")
+            activate("首页", NativeActionPurpose.HOME)
+        }
         step("商城")
         activate("商城", NativeActionPurpose.MALL)
         step("我的订单")
@@ -211,9 +283,55 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
         }
         activate("全部", NativeActionPurpose.ALL)
         var list = awaitPage { NativePaginationRules.activePages(it).any(DouyinNativeOrders::isList) }
+        repeat(3) {
+            val page = NativePaginationRules.activePages(list).singleOrNull { DouyinNativeOrders.isList(it) } ?: return@repeat
+            val node = NativePaginationRules.verticalList(page) ?: return@repeat
+            service.scrollList(page, node, forward = false)
+            delay(1_000)
+            list = read()
+        }
         list = read()
         if (NativePaginationRules.allSelected(list)) { progress.confirmScope(); progress.resolved("scope-selection") }
         else progress.blocked("scope-selection", "全部标签的选中状态没有提供，完整范围尚未确认")
+        val focusId = focusOrderId
+        val focusName = focusTitle
+        if (focusId != null && focusName != null) {
+            var foundPage: NativePage? = null
+            var foundNode: NativeNode? = null
+            var attempt = 0
+            while (foundNode == null && attempt < 6) {
+                val pages = NativePaginationRules.activePages(list).filter(DouyinNativeOrders::isList)
+                val page = pages.singleOrNull() ?: pages.firstOrNull()
+                val node = page?.nodes?.firstOrNull { it.bounds.size == 4 && it.bounds[3] > it.bounds[1] &&
+                    DouyinNativeOrders.textValues(it).any { (_, value) -> sameTitle(value, focusName) } }
+                if (page != null && node != null) {
+                    foundPage = page
+                    foundNode = node
+                    break
+                }
+                val listNode = page?.let(NativePaginationRules::verticalList)
+                if (page == null || listNode == null) break
+                service.scrollList(page, listNode, forward = true)
+                delay(700)
+                list = read()
+                attempt++
+            }
+            service.paginationEvidence(buildJsonObject {
+                put("captureId", captureId); put("action", "FOCUS_LOOKUP"); put("focusTitle", focusName)
+                put("matched", foundNode != null); put("lists", NativePaginationRules.activePages(list).count(DouyinNativeOrders::isList))
+                put("labels", JsonArray(NativePaginationRules.activePages(list).filter(DouyinNativeOrders::isList)
+                    .flatMap { page -> page.nodes.filter { it.visible }.map(DouyinNativeOrders::label) }
+                    .filter(String::isNotBlank).distinct().take(20).map(::JsonPrimitive)))
+            })
+            val page = foundPage
+            val node = foundNode
+            if (page != null && node != null) {
+                step("读取目标订单物流")
+                readCardLogistics(NativeListCard(page, node, 0, ""), focusId)
+                DouyinCaptureController.markPhase("订单列表")
+                list = returnList()
+            }
+        }
         val visited = mutableSetOf<String>()
         var scrollPage = 0
         var unchanged = 0
@@ -223,6 +341,16 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
             val next = cards.firstOrNull { "$scrollPage:${it.row}:${it.fingerprint}" !in visited }
             if (next != null) {
                 val key = "$scrollPage:${next.row}:${next.fingerprint}"
+                val focus = focusOrderId
+                val title = focusTitle
+                if (focus != null && title != null && sameTitle(next.node.text, title)) {
+                    step("读取目标订单物流，已核查 ${progress.value.orders.size} 笔")
+                    readCardLogistics(next, focus)
+                    visited.add(key)
+                    DouyinCaptureController.markPhase("订单列表")
+                    list = returnList()
+                    continue
+                }
                 step("读取订单详情，已核查 ${progress.value.orders.size} 笔")
                 try {
                     DouyinCaptureController.markPhase("订单详情")
@@ -287,6 +415,29 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
             }
         }
     }
+    private fun sameTitle(card: String, known: String): Boolean {
+        fun normalize(value: String) = value.filterNot { it == '\uFEFF' || it.isWhitespace() }.trimEnd('…', '.', '。')
+        val left = normalize(card)
+        val right = normalize(known)
+        return left.isNotEmpty() && right.isNotEmpty() && left.take(10) == right.take(10)
+    }
+    private fun cardMore(card: NativeListCard): NativeNode? {
+        val top = card.node.bounds.getOrNull(1) ?: return null
+        return card.page.nodes.filter { it.enabled && DouyinNativeOrders.label(it) == "更多" && it.bounds.size == 4 }
+            .filter { it.bounds[1] > top + 100 && it.bounds[1] - top <= 1_000 }
+            .minByOrNull { it.bounds[1] }
+    }
+    private suspend fun readCardLogistics(card: NativeListCard, orderId: String) {
+        val more = cardMore(card) ?: throw AppFailure("目标卡片没有“更多”入口", FailureKind.UNSUPPORTED_RESPONSE)
+        activate(card.page, more, NativeActionPurpose.LOGISTICS_MENU)
+        (service.application as com.logisticsmanagement.app.LogisticsApplication).container.repository.getOrders()
+            .firstOrNull { it.remoteId == orderId }?.let { session.registerOrder(it) }
+        session.prepareOcrLogistics(orderId)
+        val entry = awaitAnyLabel(5_000, "查看物流")
+        if (entry != null) service.tapNode(entry.first, entry.second) else ocrTap("查看物流")
+        val page = awaitLogistics()
+        if (page != null) readNodeLogistics(page) else readOcrLogistics()
+    }
     private suspend fun readOrder(initial: NativeScan) {
         var scan = initial
         if (matches(scan, "更多信息").isNotEmpty() && matches(scan, "展开").size == 1) {
@@ -296,13 +447,61 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
         read(); scan = read()
         val candidate = session.currentCandidate() ?: return
         if (candidate.excluded || candidate.remoteId in session.excluded || candidate.status == ParcelStatus.WAITING_SHIPMENT) return
-        val tracking = matches(scan, "查看物流")
-        if (tracking.size != 1) return
         DouyinCaptureController.markPhase("物流")
-        activate(tracking.single().first, tracking.single().second, NativeActionPurpose.LOGISTICS)
-        scan = awaitPage { DouyinNativeOrders.carrier(it) != null }
+        val tracking = matches(scan, "查看物流")
+        if (tracking.size == 1) {
+            activate(tracking.single().first, tracking.single().second, NativeActionPurpose.LOGISTICS)
+        } else {
+            val more = matches(scan, "更多")
+            service.paginationEvidence(buildJsonObject {
+                put("captureId", captureId); put("action", "LOGISTICS_ENTRY"); put("orderId", candidate.remoteId)
+                put("moreCount", more.size)
+                put("labels", JsonArray(NativePaginationRules.activePages(scan).flatMap { page -> page.nodes.filter { it.visible }.map(DouyinNativeOrders::label) }
+                    .filter(String::isNotBlank).distinct().map(::JsonPrimitive)))
+            })
+            if (more.size != 1) return
+            session.prepareOcrLogistics(candidate.remoteId)
+            activate(more.single().first, more.single().second, NativeActionPurpose.LOGISTICS_MENU)
+            val menu = awaitMaybe(3_000) { matches(it, "查看物流").size == 1 }
+            val target = menu?.let { matches(it, "查看物流").single() }?.takeIf { entry ->
+                service.rootInActiveWindow?.windowId == entry.first.windowId &&
+                    NativeActionPolicy.rejection(entry.first, entry.second, intended = NativeActionPurpose.LOGISTICS) == null
+            }
+            if (target != null) activate(target.first, target.second, NativeActionPurpose.LOGISTICS)
+            else ocrTap("查看物流")
+        }
+        val page = awaitLogistics()
+        if (page != null) {
+            readNodeLogistics(page)
+            return
+        }
+        readOcrLogistics()
+    }
+    private fun logisticsText(text: String) = listOf("物流", "运单", "轨迹", "快递").any(text::contains)
+    private suspend fun awaitLogistics(): NativeScan? {
+        val deadline = SystemClock.elapsedRealtime() + 25_000
+        var previous: Pair<String, String>? = null
+        do {
+            val scan = read()
+            if (DouyinNativeOrders.carrier(scan) != null) return scan
+            val screen = withTimeoutOrNull(8_000) { service.captureScreen() }
+            val parsed = screen?.let { DouyinOcrLogistics.parse(it.text, System.currentTimeMillis()) }
+            if (screen != null && parsed != null && logisticsText(screen.text)) {
+                val key = parsed.carrier to parsed.trackingNumber
+                if (key == previous) return null
+                previous = key
+            } else previous = null
+            delay(900)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        throw AppFailure("物流页没有提供承运商与运单号：${progress.value.step}", FailureKind.UNSUPPORTED_RESPONSE)
+    }
+    private suspend fun readNodeLogistics(initial: NativeScan) {
+        var scan = initial
         val more = matches(scan, "查看更多物流信息")
-        if (more.size == 1) { activate(more.single().first, more.single().second, NativeActionPurpose.LOGISTICS_INFORMATION); scan = awaitPage { DouyinNativeOrders.carrier(it) != null } }
+        if (more.size == 1) {
+            activate(more.single().first, more.single().second, NativeActionPurpose.LOGISTICS_INFORMATION)
+            scan = awaitPage { DouyinNativeOrders.carrier(it) != null }
+        }
         var expanded = 0
         while (true) {
             val body = NativePaginationRules.activePages(scan).flatMap { page -> page.nodes.filter { it.visible && it.enabled &&
@@ -312,6 +511,39 @@ internal class NativePaginationRunner(private val service: DouyinCaptureService,
             activate(body.first().first, body.first().second, NativeActionPurpose.LOGISTICS_BODY)
             scan = read()
         }
+        read(); read()
+    }
+    private suspend fun readOcrLogistics() {
+        val first = service.captureScreen(record = true) ?: throw AppFailure("物流页截图识别失败", FailureKind.UNSUPPORTED_RESPONSE)
+        delay(900)
+        val second = service.captureScreen(record = true)
+        val one = DouyinOcrLogistics.parse(first.text, System.currentTimeMillis())
+        val two = second?.let { DouyinOcrLogistics.parse(it.text, System.currentTimeMillis()) }
+        var parsed = one ?: two
+            ?: throw AppFailure("物流页识别没有取得承运商与运单号，识别行数 ${first.lines.size}", FailureKind.UNSUPPORTED_RESPONSE)
+        val readings = if (one != null && two != null && one.carrier == two.carrier && one.trackingNumber == two.trackingNumber) 2 else 1
+        var text = first.text + (second?.let { "\n" + it.text } ?: "")
+        var latest = (second ?: first).text
+        var expanded = 0
+        while (expanded < 3) {
+            val label = listOf("展开全部物流信息", "查看更多物流信息").firstOrNull { latest.filterNot(Char::isWhitespace).contains(it) } ?: break
+            val tap = service.tapScreenText(label)
+            if (!tap.accepted) break
+            delay(1_500)
+            val next = service.captureScreen(record = true) ?: break
+            latest = next.text
+            text = text + "\n" + latest
+            DouyinOcrLogistics.parse(text, System.currentTimeMillis())?.let { parsed = it }
+            expanded++
+        }
+        service.paginationEvidence(buildJsonObject {
+            put("captureId", captureId); put("action", "LOGISTICS_OCR"); put("carrier", parsed.carrier)
+            put("trackingNumber", parsed.trackingNumber); put("status", parsed.status.name)
+            put("events", parsed.events.size); put("expanded", expanded); put("readings", readings)
+            put("lines", first.lines.size)
+        })
+        session.acceptOcrLogistics(parsed, readings)
+        back()
         read(); read()
     }
 }

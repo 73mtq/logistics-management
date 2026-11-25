@@ -67,6 +67,18 @@ internal class NativeLogisticsImportSession(private val save: suspend (String, S
         }
     }
 
+    fun recordOcr(orderId: String, result: OcrLogisticsResult, readings: Int) {
+        savedSources.add(orderId to "${result.carrier}:${result.trackingNumber}")
+        missing.remove(orderId)
+        records.add(buildJsonObject {
+            put("orderId", orderId); put("source", "ocr"); put("carrier", result.carrier)
+            put("trackingNumber", result.trackingNumber); put("status", result.status.name); put("confirmedReadings", readings)
+            put("events", JsonArray(result.events.map { event -> buildJsonObject {
+                put("time", event.time); put("text", event.text); put("status", event.status)
+            } }))
+        })
+    }
+
     fun evidence() = buildJsonObject {
         put("savedSources", savedSources.size)
         put("missing", buildJsonObject { missing.forEach { (id, values) -> put(id, JsonArray(values.map(::JsonPrimitive))) } })

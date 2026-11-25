@@ -4,7 +4,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 
 private const val ACTION_CLICK = AccessibilityNodeInfo.ACTION_CLICK
 
-internal enum class NativeActionPurpose { ACCOUNT, HOME, MALL, ORDERS, ALL, ORDER_DETAIL, ORDER_INFORMATION, LOGISTICS, LOGISTICS_INFORMATION, LOGISTICS_BODY, SCROLL, UNKNOWN }
+internal enum class NativeActionPurpose { ACCOUNT, HOME, MALL, ORDERS, ALL, ORDER_DETAIL, ORDER_INFORMATION, LOGISTICS, LOGISTICS_MENU, LOGISTICS_INFORMATION, LOGISTICS_BODY, SCROLL, UNKNOWN }
 
 internal object NativeActionPolicy {
     private val forbidden = listOf("确认收货", "确认签收", "立即付款", "立即支付", "去支付", "取消订单", "申请退款", "申请售后", "删除订单", "评价", "再来一单", "加入购物车", "立即购买")
@@ -25,6 +25,8 @@ internal object NativeActionPolicy {
             NativePaginationRules.cardsOnPage(page).any { it.node == node } -> NativeActionPurpose.ORDER_DETAIL
             label == "展开" && hasLabel(page, "更多信息") && hasLabel(page, "订单编号") && informationScope(page, node) != null -> NativeActionPurpose.ORDER_INFORMATION
             label == "查看物流" && hasLabel(page, "订单编号") -> NativeActionPurpose.LOGISTICS
+            label == "更多" && hasLabel(page, "订单编号") && !DouyinNativeOrders.isList(page) -> NativeActionPurpose.LOGISTICS_MENU
+            label == "更多" && DouyinNativeOrders.isList(page) -> NativeActionPurpose.LOGISTICS_MENU
             label == "查看更多物流信息" && logisticsPage(page) -> NativeActionPurpose.LOGISTICS_INFORMATION
             label.endsWith("展开") && label.length > 10 && logisticsPage(page) && eventScope(page, node) != null -> NativeActionPurpose.LOGISTICS_BODY
             else -> NativeActionPurpose.UNKNOWN
@@ -72,6 +74,7 @@ internal object NativeActionPolicy {
             NativePaginationRules.verticalList(page)?.let { list -> list.path + card.row }
         }
         NativeActionPurpose.ORDER_INFORMATION -> informationScope(page, anchor)
+        NativeActionPurpose.LOGISTICS_MENU -> controlScope(page, anchor) ?: anchor.path
         NativeActionPurpose.LOGISTICS_BODY -> eventScope(page, anchor)
         else -> controlScope(page, anchor)
     }
