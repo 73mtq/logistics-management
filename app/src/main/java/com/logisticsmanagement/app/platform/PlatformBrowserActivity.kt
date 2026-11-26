@@ -128,7 +128,8 @@ class PlatformBrowserActivity : ComponentActivity() {
         }
         if (mode == "login" && selected.platform == Platform.TAOBAO) assistTaobaoLogin(selected, browser)
         if (mode == "login" && selected.platform == Platform.PDD) assistPddLogin(selected, browser)
-        if (mode == "login" && selected.platform != Platform.DOUYIN && selected.platform != Platform.PDD) pollLoginSession(selected)
+        if (mode == "login" && selected.platform == Platform.JD) assistJdLogin(selected, browser)
+        if (mode == "login" && selected.platform != Platform.DOUYIN && selected.platform != Platform.PDD && selected.platform != Platform.JD) pollLoginSession(selected)
     }
 
     private fun assistTaobaoLogin(selected: Account, browser: PlatformWebView) = lifecycleScope.launch {
@@ -187,6 +188,30 @@ class PlatformBrowserActivity : ComponentActivity() {
                 }
                 is PddLoginResult.Blocked -> {
                     registry.saveAccountSecret(selected, PDD_LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
+                    val state = if (result.kind == FailureKind.NEEDS_LOGIN) AccountState.NEEDS_LOGIN else AccountState.NEEDS_VERIFICATION
+                    updateState(state, result.message)
+                    status.text = result.message
+                }
+            }
+        } catch (failure: AppFailure) { recordFailure(failure) }
+    }
+
+    private fun assistJdLogin(selected: Account, browser: PlatformWebView) = lifecycleScope.launch {
+        val flow = JdLoginFlow(browser, this@PlatformBrowserActivity, selected, { hasLoginSession(selected) }) { message -> status.text = message }
+        try {
+            delay(1_500)
+            when (val result = flow.run(JD_LOGIN_TIMEOUT_MILLIS)) {
+                JdLoginResult.Succeeded -> {
+                    registry.saveAccountSecret(selected, JD_LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
+                    updateState(AccountState.READY, null)
+                    val stored = checkNotNull(registry.repository.getAccount(selected.id))
+                    registry.repository.saveAccount(stored.copy(lastAttemptAt = null))
+                    status.text = "京东登录会话已经保存"
+                    setResult(RESULT_OK)
+                    finish()
+                }
+                is JdLoginResult.Blocked -> {
+                    registry.saveAccountSecret(selected, JD_LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
                     val state = if (result.kind == FailureKind.NEEDS_LOGIN) AccountState.NEEDS_LOGIN else AccountState.NEEDS_VERIFICATION
                     updateState(state, result.message)
                     status.text = result.message
@@ -328,7 +353,9 @@ class PlatformBrowserActivity : ComponentActivity() {
 
     private companion object {
         const val LOGIN_TIMEOUT_MILLIS = 180_000L
+        const val JD_LOGIN_TIMEOUT_MILLIS = 600_000L
         const val LOGIN_EVIDENCE = "taobao.login"
         const val PDD_LOGIN_EVIDENCE = "pdd.login"
+        const val JD_LOGIN_EVIDENCE = "jd.login"
     }
 }

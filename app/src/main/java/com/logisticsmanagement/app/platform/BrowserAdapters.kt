@@ -42,6 +42,7 @@ internal abstract class BrowserAdapter(protected val registry: PlatformRegistry)
     open suspend fun trackingUrl(account: Account, source: SourceRef): String = source.orderUrl
     open fun trackingAction(session: PlatformWebView, source: SourceRef) = Unit
     open fun orderAction(session: PlatformWebView) = Unit
+    open fun scrollOrders(session: PlatformWebView) = session.advanceOrders()
 
     suspend fun rememberOrderPage(account: Account, page: OrderPage) {
         for ((remoteId, url) in page.trackingUrls) registry.saveAccountSecret(account, trackingKey(remoteId), url)
@@ -98,7 +99,7 @@ internal abstract class BrowserAdapter(protected val registry: PlatformRegistry)
                 if (endAt != null && responseAt > 0 && now - maxOf(checkNotNull(endAt), responseAt) >= 3_000) return@withContext
                 if (now >= nextScroll && session.currentUrl.isNotBlank()) {
                     if (!initialized) { orderAction(session); initialized = true }
-                    session.advanceOrders()
+                    scrollOrders(session)
                     nextScroll = now + 3_000
                 }
             }
@@ -152,10 +153,18 @@ internal class JdAdapter(registry: PlatformRegistry) : BrowserAdapter(registry) 
     override val platform = Platform.JD
     override val loginUrl = "https://plogin.m.jd.com/login/login?appid=300&returnurl=https%3A%2F%2Fhome.m.jd.com%2FmyJd%2Fhome.action"
     override val orderListUrl = "https://trade.m.jd.com/order/orderlist_jdm.shtml?orderType=all&source=m_outer_jx_order"
-    override val allowedOrigins = setOf("https://plogin.m.jd.com", "https://home.m.jd.com", "https://trade.m.jd.com", "https://wqs.jd.com", "https://www.jd.com", "https://api.m.jd.com", "https://m.jd.com", "https://my.m.jd.com", "https://recharge.m.jd.com", "https://locdetails.jd.com")
+    override val allowedOrigins = setOf("https://plogin.m.jd.com", "https://home.m.jd.com", "https://trade.m.jd.com", "https://o.m.jd.com", "https://wqs.jd.com", "https://www.jd.com", "https://api.m.jd.com", "https://m.jd.com", "https://my.m.jd.com", "https://recharge.m.jd.com", "https://locdetails.jd.com")
 
     override fun parseOrders(capture: CapturedResponse): OrderPage? {
-        if (capture.kind != "response" || !Uri.parse(capture.url).getQueryParameter("functionId").equals("order_list_m")) return null
+        if (capture.kind != "response") return null
+        return when (Uri.parse(capture.url).getQueryParameter("functionId")) {
+            "order_list_m" -> parseOrderList(capture)
+            "newUserAllOrderList" -> parseOrderListV2(capture)
+            else -> null
+        }
+    }
+
+    private fun parseOrderList(capture: CapturedResponse): OrderPage {
         val root = platformResponse(capture.body, "京东")
         checkJdEnvelope(root, "京东")
         val body = root.objectOrNull("body") ?: throw AppFailure("京东订单响应缺少 body", FailureKind.UNSUPPORTED_RESPONSE)
@@ -203,12 +212,45 @@ internal class JdAdapter(registry: PlatformRegistry) : BrowserAdapter(registry) 
         return OrderPage(orders, list.map { it.requiredText("orderId") }.toSet(), total, total == 0, trackingUrls, excluded)
     }
 
+    private fun parseOrderListV2(capture: CapturedResponse): OrderPage {
+        val root = platformResponse(capture.body, "京东")
+        val list = root.arrayOrNull("orderList")
+            ?: throw AppFailure("京东订单响应结构尚未支持（code=" + root.text("code") + "）", FailureKind.UNSUPPORTED_RESPONSE)
+        val excluded = mutableSetOf<String>()
+        val orders = list.mapNotNull { value ->
+            val order = value.requireObject("京东订单")
+            val id = order.requiredText("orderId")
+            if (excludedService(order)) {
+                excluded.add(id)
+                return@mapNotNull null
+            }
+            val statusText = order.text("orderStatusShow").ifBlank { order.text("orderStatus") }
+            if (closedOrder(statusText)) return@mapNotNull null
+            val wares = order.objectOrNull("orderMsg")?.arrayOrNull("wareInfoList").orEmpty().map { it.requireObject("京东商品") }
+            val type = order.text("orderType")
+            val isRecharge = statusText.contains("充值成功") || (type in setOf("34", "37") && order.text("isVirtualOrder") == "true")
+            val status = orderStatus(statusText)
+            ImportedOrder(id, wares.mapNotNull { it.text("wname").takeIf(String::isNotBlank) }.joinToString("、").ifBlank { "京东订单" },
+                status, order.text("dataSubmit").takeIf(String::isNotBlank)?.let(::parsePlatformTime),
+                "https://o.m.jd.com/detail?orderId=" + Uri.encode(id),
+                imageUrl(wares.firstOrNull()?.text("imageurl").orEmpty()),
+                if (status == ParcelStatus.WAITING_SHIPMENT || isRecharge) emptyList() else listOf(ImportedShipment(id, status = status)))
+        }
+        val ids = list.map { it.requireObject("京东订单").requiredText("orderId") }.toSet()
+        return OrderPage(orders, ids, total = null, complete = root.text("hasNext") == "false" || list.isEmpty(), excludedRemoteIds = excluded)
+    }
+
     private fun excludedService(order: JsonObject): Boolean {
-        if (!order.containsKey("orderType")) return false
-        val type = order.requiredText("orderType").toIntOrNull()
-            ?: throw AppFailure("京东订单类型格式尚未支持", FailureKind.UNSUPPORTED_RESPONSE)
+        val type = order.text("orderType").toIntOrNull() ?: return false
+        if (!order.containsKey("specialDealList")) {
+            return when (type) {
+                22 -> order.text("isStoreOrder") == "true" || order.objectOrNull("orderInfoExt")?.text("orderTypeFlag") == "2"
+                34, 37 -> order.text("isVirtualOrder") == "true"
+                75 -> true
+                else -> false
+            }
+        }
         if (type !in setOf(22, 34, 37, 75)) return false
-        if (!order.containsKey("specialDealList")) return false
         val tags = order.requiredArray("specialDealList").map { value ->
             val tag = value as? JsonPrimitive
             if (tag == null || !tag.isString) throw AppFailure("京东订单业务标志格式尚未支持", FailureKind.UNSUPPORTED_RESPONSE)
@@ -236,7 +278,12 @@ internal class JdAdapter(registry: PlatformRegistry) : BrowserAdapter(registry) 
     }
 
     override suspend fun trackingUrl(account: Account, source: SourceRef): String =
-        registry.accountSecret(account, trackingKey(source.remoteOrderId)) ?: source.orderUrl
+        "https://o.m.jd.com/track?orderId=" + Uri.encode(source.remoteOrderId)
+
+    override fun scrollOrders(session: PlatformWebView) {
+        session.evaluate(CaptureScripts.jdScroll)
+        session.advanceOrders()
+    }
 
     override fun trackingAction(session: PlatformWebView, source: SourceRef) {
         val current = Uri.parse(session.currentUrl)
@@ -247,13 +294,15 @@ internal class JdAdapter(registry: PlatformRegistry) : BrowserAdapter(registry) 
     }
 
     override fun parseTracking(capture: CapturedResponse, source: SourceRef): ImportedShipment? {
-        if (capture.kind == "response" && Uri.parse(capture.url).getQueryParameter("functionId") == "get_logistics_list_by_order_m") {
+        val functionId = if (capture.kind == "response") Uri.parse(capture.url).getQueryParameter("functionId") else null
+        if (functionId == "get_logistics_list_by_order_m") {
             val root = platformResponse(capture.body, "京东物流")
             checkJdEnvelope(root, "京东物流")
             val body = root.objectOrNull("body") ?: throw AppFailure("京东物流响应缺少 body", FailureKind.UNSUPPORTED_RESPONSE)
             val points = body.requiredArray("tracePointVOList")
             if (points.isEmpty()) throw AppFailure("京东没有提供该订单的物流轨迹", FailureKind.SERVICE_ERROR)
         }
+        if (functionId == "orderTrackBusiness") return parseTrackBusiness(capture, source)
         if (capture.kind != "dom" || !Uri.parse(capture.url).path.orEmpty().contains("deal_wuliu")) return null
         val lines = capture.body.lines().map(String::trim)
         val points = mutableListOf<TrackingEventData>()
@@ -274,6 +323,27 @@ internal class JdAdapter(registry: PlatformRegistry) : BrowserAdapter(registry) 
         val carrier = Regex("国内承运人\\s*[:：]?\\s*([^\\n]{2,30})").find(capture.body)?.groupValues?.get(1)?.trim().orEmpty()
         return ImportedShipment(source.remoteShipmentId, number, carrier, status = parcelStatus(latest.text),
             pickupCode = pickupCode(latest.text), events = points)
+    }
+
+    private fun parseTrackBusiness(capture: CapturedResponse, source: SourceRef): ImportedShipment {
+        val root = platformResponse(capture.body, "京东物流")
+        val floors = root.arrayOrNull("floors") ?: throw AppFailure("京东物流响应缺少 floors", FailureKind.UNSUPPORTED_RESPONSE)
+        val data = floors.mapNotNull { it as? JsonObject }.mapNotNull { it.objectOrNull("data") }
+            .firstOrNull { it.arrayOrNull("orderMessageList") != null }
+            ?: throw AppFailure("京东物流响应缺少轨迹楼层", FailureKind.UNSUPPORTED_RESPONSE)
+        val messages = data.requiredArray("orderMessageList").map { it.requireObject("京东物流") }
+        val events = messages.mapNotNull { node ->
+            val time = node.text("crateTime")
+            val text = node.text("message").ifBlank { node.text("trackNodeState") }
+            if (time.isBlank() || text.isBlank()) null else trackingEvent(time, text)
+        }
+        if (events.isEmpty()) throw AppFailure("京东没有提供该订单的物流轨迹", FailureKind.SERVICE_ERROR)
+        val latest = events.maxBy { it.time }
+        val carriers = data.arrayOrNull("carrierInfos").orEmpty().mapNotNull { it as? JsonObject }
+        val carrier = carriers.mapNotNull { it.text("carrierName").takeIf(String::isNotBlank) }.firstOrNull().orEmpty()
+        val number = carriers.mapNotNull { it.text("waybillNumber").takeIf(String::isNotBlank) }.firstOrNull()
+        return ImportedShipment(source.remoteShipmentId, number, carrier, status = parcelStatus(latest.text),
+            pickupCode = pickupCode(latest.text), events = events)
     }
 }
 

@@ -7,7 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 internal object CaptureScripts {
     fun install(platform: Platform): String {
         val patterns = when (platform) {
-            Platform.JD -> listOf("order_list_m", "order_detail_m", "order_common_order_detail", "get_logistics_list_by_order_m", "deal_wuliu", "orderTrack")
+            Platform.JD -> listOf("order_list_m", "newUserAllOrderList", "queryListAsyncInfo", "order_detail_m", "order_common_order_detail", "get_logistics_list_by_order_m", "deal_wuliu", "orderTrack")
             Platform.PDD -> listOf("order_list_v4", "order_detail", "logistics", "goods_express", "login")
             Platform.TAOBAO -> listOf("mtop.taobao.order.queryboughtlistv2", "mtop.taobao.logisticstracedetailservice.queryalltrace")
             Platform.DOUYIN -> emptyList()
@@ -221,6 +221,34 @@ internal object CaptureScripts {
           });
           if (!matches.length) return false;
           matches[0].click(); return true;
+        })();
+    """.trimIndent()
+
+    val jdScroll = """
+        (function() {
+          try {
+            var all = document.querySelectorAll('*');
+            var best = null;
+            var bestSh = 0;
+            for (var i = 0; i < all.length; i++) {
+              var n = all[i];
+              var sh = n.scrollHeight || 0;
+              if (sh > bestSh && sh > n.clientHeight + 100 && n.clientHeight > 100) { best = n; bestSh = sh; }
+            }
+            if (!best) best = document.scrollingElement || document.documentElement;
+            var before = best.scrollTop || 0;
+            var step = Math.floor((best.clientHeight || 900) * 0.85);
+            var target = before + step;
+            try { if (typeof best.scrollTo === 'function') best.scrollTo(0, target); } catch (e) {}
+            try { best.scrollTop = target; } catch (e) {}
+            try { document.scrollingElement.scrollTop = target; } catch (e) {}
+            try { window.scrollTo(0, best.scrollTop || target); } catch (e) {}
+            try { best.dispatchEvent(new Event('scroll', {bubbles: true})); } catch (e) {}
+            var after = best.scrollTop || 0;
+            return JSON.stringify({tag: best.tagName || '', sh: bestSh, ch: best.clientHeight || 0, top: after, moved: after > before + 8});
+          } catch (e) {
+            return JSON.stringify({tag: '', sh: 0, ch: 0, top: 0, moved: false, error: String(e)});
+          }
         })();
     """.trimIndent()
 

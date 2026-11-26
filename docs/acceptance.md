@@ -1,6 +1,6 @@
 # 验收记录
 
-更新日期：2026-11-26，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-26 完成 S2 已导入订单物流读取的两轮验证，列表结束标志与未导入订单保持未完成；同日完成 S3 淘宝短信会话恢复与两轮订单物流读取；同日完成 S4 拼多多短信会话恢复与两轮订单物流读取（20 笔订单、24 条轨迹、查询队列 0，分页与标签计数通过，平台结束标志与原生页面对照未完成）；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
+更新日期：2026-11-26，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-26 完成 S2 已导入订单物流读取的两轮验证，列表结束标志与未导入订单保持未完成；同日完成 S3 淘宝短信会话恢复与两轮订单物流读取；同日完成 S4 拼多多短信会话恢复与两轮订单物流读取（20 笔订单、24 条轨迹、查询队列 0，分页与标签计数通过，平台结束标志与原生页面对照未完成）；同日完成 S5 京东短信会话恢复与订单页迁移适配（列表单次读取 50 笔去重、36 笔排除、1 笔 90 天内订单写入生产库，物流 25 条轨迹，两轮 21.079 秒与 19.268 秒稳定，清除浏览数据后 NEEDS_LOGIN 与重新登录 READY 均通过）；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
 
 ## 2026-11-25 S1 抖音物流自动导入闭环
 
@@ -78,6 +78,29 @@
 
 未完成范围：平台结束标志、待分享标签、两条订单的状态提示文本未命中现有映射、原生 App 页面计数与原生物流对照、拼多多单设备登录策略对原生 App 的影响。
 
+## 2026-11-26 S5 京东会话恢复与订单物流读取
+
+固定流程：应用设置 → 添加京东账号（名称含绑定号码）→ 创建并登录 → 应用内京东登录页 → 协议勾选 → 填入本机号码 → 获取验证码 → 完成拼图安全验证 → 通知监听填入短信验证码 → 提交“同意协议并登录”。订单页迁移后，订单读取使用 o.m.jd.com 的 newUserAllOrderList 响应，物流读取使用 orderTrackBusiness 响应与 o.m.jd.com/track 页面。
+
+两轮结果（设备 95f79212，应用 1.1.0、versionCode 2，调试签名，主 APK SHA-256 64de204d…；最终包 4dd7f94c…）：
+
+- 会话：账号「京东 132****2972」，清除浏览数据前 READY，profile 含 pt_key 与 pt_pin；清除浏览数据后同步得到 NEEDS_LOGIN 且账号状态为 NEEDS_LOGIN，重新登录后 READY，lastSyncedAt 为 18:14。
+- 第 1 轮：21.079 秒，READY，orders 1、sources 1、shipments 1、events 25、去重 events 25、pending 0，newOrders 0（唯一订单在订单页迁移后的首次尝试中已写入）。
+- 第 2 轮：19.268 秒，同样的订单、来源、包裹与轨迹数量，newOrders 0、newSources 0。
+- 最终包复核：安装密码页判定顺序修正后的构建（主 APK SHA-256 4dd7f94c…）再执行一轮，23.157 秒，READY，orders 1、sources 1、events 25、pending 0，计数不变。
+- 数据库比较：两轮 orders、SourceRef、Shipment、TrackingEvent 稳定；查询队列 0；integrity_check ok。
+- 订单列表：单次读取 6 条 newUserAllOrderList 响应，依次 10、10、10、10、10、0 笔，hasNext 前五次为真、末次为假；去重 50 笔；结束原因为 hasNext 为假与末页空响应。
+- 类型过滤：解析保留 12 笔（其中 90 天内 1 笔，写入生产库），排除 36 笔（orderType 22 且 isStoreOrder 或 orderTypeFlag=2 共 33 笔；34/37 且 isVirtualOrder 共 2 笔；75 共 1 笔），另关闭订单 2 笔；待发货与待收货现场样本为 0。
+- 物流：京东快递，运单尾号 2187，状态已签收，25 条轨迹；轨迹正文来自 orderTrackBusiness 的 orderMessageList 与 carrierInfos。
+- 失败场景：清除浏览数据后同步得到 NEEDS_LOGIN；T09 的 601 响应回放得到 SERVICE_ERROR 与 FAILED；302 与登录页安全验证没有现场样本，未回放。
+- 页面核对：Pinky 打开京东 App「我的」页记录订单入口且无数字角标；打开「全部」页触发京东自身「京东验证」，原生计数对照未完成。应用包裹页显示该京东订单的京东快递尾号与已签收文本。
+- 证据：work/evidence/platform-logistics-v2/S5/20261126-1705/（before、after-login、after-round1-attempt、after-round1、after-round2、before-session-removal、after-session-removed、after-relogin、after-final-round、round1.json、round2.json、round2-final.json、s5-pages-pages.json、s5-pages-types.json、login-steps.json、relogin-steps.json、relogin-summary.json）；Pinky 记录 work/evidence/pinky/S5/。
+- 验证：四项 Gradle 命令通过（assembleDebug、assembleDebugAndroidTest、testDebugUnitTest、lintDebug；两次执行 2 分 5 秒与 2 分 39 秒），Lint 0 errors、75 warnings、2 hints；主机测试 42 项、0 失败、12 跳过；设备测试 JdSessionEvidenceTest#exportLogin（两次）、#roundOne、#roundTwo、#syncWithoutSessionReportsLogin，JdOrderEvidenceTest#recordRealOrders、#replayRealOrders、#replayRealFailure，以及诊断方法 recordRealListPage、recordUrl。
+
+修正记录：京东订单页从 trade.m.jd.com/order/orderlist_jdm.shtml 跳转 o.m.jd.com/list，旧 order_list_m 接口不再由页面调用；新增 newUserAllOrderList 解析、o.m.jd.com/track 与 orderTrackBusiness 物流解析、hasNext 结束条件与页面内部滚动脚本。首次同步尝试未完成分页，已取得订单已经保存，随后修正并重跑。
+
+未完成范围：待发货与待收货现场样本、302 与安全验证现场样本、原生京东 App 订单计数对照、页面没有文本结束标志（以 hasNext 为结束依据）、多包裹与跨年物流样本。
+
 ## 已验证的阶段范围
 
 | 阶段 | 已取得的真实依据 | 保留的条件 |
@@ -134,7 +157,7 @@ T15四项Gradle检查通过，2分20秒，1项执行82项保持；主机测试�
 
 ## 继续未完成的范围
 
-- 京东、淘宝部分类型及完整平台范围；早期跨阶段字段变化的独立响应依据。
+- 京东待发货与待收货现场样本、302 与安全验证现场样本、原生 App 订单计数对照、多包裹与跨年物流；淘宝部分类型及完整平台范围；早期跨阶段字段变化的独立响应依据。
 - 真实共享来源、别名、非空历史备注和归档迁移，以及缺少被删除平台来源的清理分支。
 - 在途、跨年、多包裹、新订单、账号不匹配、登录及安全验证的部分原生场景。
 - 抖音完整列表结束、两笔候选必要字段、完整物流历史到底及无障碍自动重连。

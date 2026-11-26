@@ -1,5 +1,6 @@
 package com.logisticsmanagement.app
 
+import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -15,6 +16,7 @@ import com.logisticsmanagement.app.model.AccountState
 import com.logisticsmanagement.app.platform.CapturedResponse
 import com.logisticsmanagement.app.platform.JdAdapter
 import com.logisticsmanagement.app.platform.PlatformWebView
+import com.logisticsmanagement.app.platform.arrayOrNull
 import com.logisticsmanagement.app.platform.platformResponse
 import com.logisticsmanagement.app.platform.requiredArray
 import com.logisticsmanagement.app.platform.requiredText
@@ -251,7 +253,15 @@ class JdOrderEvidenceTest {
                     assertTrue(stored.none { it.remoteId in batch.excludedRemoteIds })
                 }
             }
-            Log.i("JdOrderEvidence", "completed captures=${captures.size} batches=${batches.size} excluded=${batches.flatMap { it.excludedRemoteIds }.toSet().size}")
+            val pages = listPages(captures)
+            assertTrue("需要订单列表页响应", pages.isNotEmpty())
+            val distinct = pages.flatMap { it.ids }.toSet().size
+            val lastTotal = pages.lastOrNull()?.totalNum
+            val lastHasNext = pages.lastOrNull()?.hasNext
+            val endSeen = captures.any { it.kind == "end" }
+            assertTrue("订单列表结束需要达到 totalNum、出现结束标志或 hasNext 为 false，distinct=" + distinct + " totalNum=" + lastTotal + " hasNext=" + lastHasNext,
+                (lastTotal != null && distinct >= lastTotal) || endSeen || lastHasNext == false)
+            Log.i("JdOrderEvidence", "completed captures=${captures.size} batches=${batches.size} excluded=${batches.flatMap { it.excludedRemoteIds }.toSet().size} pages=${pages.size} distinct=" + distinct + " totalNum=" + lastTotal + " endSeen=" + endSeen)
         } finally {
             File(directory, "$name-captures.json").writeText(json.encodeToString(captures))
             File(directory, "$name-batches.json").writeText(JsonArray(batches.map { batch ->
@@ -261,7 +271,134 @@ class JdOrderEvidenceTest {
                     put("observedCount", batch.observedCount)
                 }
             }).toString())
+            writePageEvidence(listPages(captures), captures.any { it.kind == "end" }, batches, directory, name)
         }
+    }
+
+    private data class JdListPage(val currNum: Int, val totalNum: Int?, val hasNext: Boolean?, val ids: List<String>, val orders: List<JsonObject>)
+
+    private fun listPages(captures: List<CapturedResponse>): List<JdListPage> =
+        captures.filter { it.kind == "response" }.mapNotNull { capture ->
+            when (Uri.parse(capture.url).getQueryParameter("functionId")) {
+                "order_list_m" -> {
+                    val body = platformResponse(capture.body, "京东").objectOrNull("body") ?: return@mapNotNull null
+                    val orders = body.requiredArray("orderList").map { it.requireObject("京东订单") }
+                    JdListPage(body.text("currNum").toIntOrNull() ?: 0, body.text("totalNum").toIntOrNull(), null,
+                        orders.map { it.requiredText("orderId") }, orders)
+                }
+                "newUserAllOrderList" -> {
+                    val root = platformResponse(capture.body, "京东")
+                    val list = root.arrayOrNull("orderList") ?: return@mapNotNull null
+                    val orders = list.map { it.requireObject("京东订单") }
+                    JdListPage(0, null, root.text("hasNext") == "true",
+                        orders.map { it.requiredText("orderId") }, orders)
+                }
+                else -> null
+            }
+        }
+
+    private fun writePageEvidence(pages: List<JdListPage>, endSeen: Boolean, batches: List<OrderBatch>, directory: File, name: String) {
+        if (pages.isEmpty()) return
+        val distinct = linkedSetOf<String>()
+        val pageJson = JsonArray(pages.map { page ->
+            distinct.addAll(page.ids)
+            buildJsonObject {
+                put("currNum", page.currNum)
+                put("totalNum", page.totalNum)
+                put("hasNext", page.hasNext)
+                put("size", page.ids.size)
+                put("distinct", distinct.size)
+            }
+        })
+        File(directory, "$name-pages.json").writeText(buildJsonObject {
+            put("pages", pageJson)
+            put("distinct", distinct.size)
+            put("lastTotalNum", pages.lastOrNull()?.totalNum)
+            put("lastHasNext", pages.lastOrNull()?.hasNext)
+            put("endSeen", endSeen)
+        }.toString())
+        val excluded = batches.flatMap { it.excludedRemoteIds }.toSet()
+        val combos = linkedMapOf<String, Int>()
+        pages.flatMap { it.orders }.distinctBy { it.requiredText("orderId") }.forEach { order ->
+            val id = order.requiredText("orderId")
+            val tags = (order["specialDealList"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { value -> value.isString }?.content }.orEmpty().joinToString(",")
+            val link = order.objectOrNull("orderDetailLink")?.text("url").orEmpty()
+            val uri = Uri.parse(link)
+            val combo = order.text("orderType") + "|" + tags + "|" + uri.host + uri.path + "|" + if (id in excluded) "excluded" else "retained"
+            combos[combo] = (combos[combo] ?: 0) + 1
+        }
+        File(directory, "$name-types.json").writeText(JsonArray(combos.map { (combo, count) ->
+            buildJsonObject {
+                put("combo", combo)
+                put("count", count)
+            }
+        }).toString())
+    }
+
+    @Test fun recordUrl(): Unit = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val arguments = InstrumentationRegistry.getArguments()
+        val container = (context.applicationContext as LogisticsApplication).container
+        container.ready.await()
+        val account = checkNotNull(container.repository.getAccount(checkNotNull(arguments.getString("accountId"))))
+        assertEquals(Platform.JD, account.platform)
+        val url = checkNotNull(arguments.getString("url"))
+        require(url.startsWith("https://o.m.jd.com/"))
+        val name = checkNotNull(arguments.getString("name"))
+        require(name.matches(Regex("[A-Za-z0-9-]+")))
+        val directory = File(context.filesDir, "jd-order-evidence").apply { check(mkdirs() || isDirectory) }
+        val captures = mutableListOf<CapturedResponse>()
+        try {
+            withContext(Dispatchers.Main.immediate) {
+                requirePlatformLoginSession(container.platforms.profiles, account)
+                val session = PlatformWebView(context, account, JdAdapter(container.platforms), container.platforms.profiles, false)
+                try {
+                    session.load(url)
+                    val clickText = arguments.getString("clickText")
+                    val deadline = SystemClock.elapsedRealtime() + 20_000
+                    var clickAt = if (clickText.isNullOrBlank()) 0L else SystemClock.elapsedRealtime() + 4_000
+                    var nextSnapshot = SystemClock.elapsedRealtime() + 3_000
+                    while (SystemClock.elapsedRealtime() < deadline) {
+                        withTimeoutOrNull(500) { session.messages.receive() }?.let { captures.add(it) }
+                        if (clickAt > 0L && SystemClock.elapsedRealtime() >= clickAt) {
+                            clickAt = 0L
+                            val safe = clickText!!.replace("\\", "\\\\").replace("'", "\\'")
+                            val clicked = withTimeoutOrNull(4_000) {
+                                session.evaluateAwait("""
+                                    (function() {
+                                      var labels = Array.prototype.filter.call(document.querySelectorAll('a,button,div,span'), function(e) {
+                                        return (e.innerText || '').trim() === '$safe' && e.getBoundingClientRect().height > 0;
+                                      });
+                                      if (!labels.length) return 'missing';
+                                      labels[0].click();
+                                      return 'clicked';
+                                    })();
+                                """.trimIndent())
+                            } ?: "timeout"
+                            captures.add(CapturedResponse("click", session.currentUrl, clicked, 200))
+                        }
+                        if (SystemClock.elapsedRealtime() >= nextSnapshot) {
+                            val result = CompletableDeferred<String>()
+                            session.view.evaluateJavascript("""
+                                (function() {
+                                  return JSON.stringify({url: location.href, text: document.body ? document.body.innerText : '',
+                                    resources: performance.getEntriesByType('resource').map(function(entry) { return entry.name; })});
+                                })();
+                            """.trimIndent()) { result.complete(checkNotNull(it)) }
+                            val raw = withTimeout(5_000) { result.await() }
+                            val snapshot = platformResponse(json.parseToJsonElement(raw).jsonPrimitive.content, "京东页面")
+                            captures.add(CapturedResponse("domText", snapshot.requiredText("url"), snapshot.text("text"), 200))
+                            captures.add(CapturedResponse("domResources", snapshot.requiredText("url"), snapshot.requiredArray("resources").toString(), 200))
+                            nextSnapshot = SystemClock.elapsedRealtime() + 5_000
+                        }
+                    }
+                } finally { session.close() }
+            }
+        } finally {
+            File(directory, name + "-captures.json").writeText(json.encodeToString(captures))
+        }
+        Log.i("JdOrderEvidence", "url capture completed name=" + name + " captures=" + captures.size)
     }
 
     @Test fun recordRealDetail(): Unit = recordRealPage(false)
