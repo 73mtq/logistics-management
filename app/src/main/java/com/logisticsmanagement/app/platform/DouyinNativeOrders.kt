@@ -8,6 +8,9 @@ import java.security.MessageDigest
 internal data class NativeFieldEvidence(val name: String, val value: String, val windowId: Int, val path: List<Int>, val sequence: Int, val orderId: String? = null,
     val valuePaths: List<List<Int>> = emptyList(), val sourceProperty: String = "text")
 
+@Serializable
+internal data class NativeDetailField(val name: String, val value: String, val path: List<Int>, val bounds: List<Int>)
+
 internal data class NativeOrderCandidate(val remoteId: String, val title: String?, val status: ParcelStatus,
     val createdAt: Long?, val ordinary: Boolean, val excluded: Boolean, val fields: List<NativeFieldEvidence>) {
     fun missing(): List<String> = buildList {
@@ -114,6 +117,47 @@ internal object DouyinNativeOrders {
             }
         }
         return null
+    }
+
+    private fun commonPrefix(left: List<Int>, right: List<Int>): Int {
+        var index = 0
+        while (index < left.size && index < right.size && left[index] == right[index]) index++
+        return index
+    }
+
+    fun informationToggle(page: NativePage): NativeNode? {
+        val header = page.nodes.singleOrNull { it.visible && label(it) == "更多信息" } ?: return null
+        val prefix = (header.path.size - 5).coerceAtLeast(1)
+        return page.nodes.filter { it.visible && it.enabled && label(it) in setOf("展开", "收起") }
+            .filter { commonPrefix(header.path, it.path) >= prefix }
+            .singleOrNull()
+    }
+
+    private val detailNames = setOf("订单编号", "下单时间", "付款时间", "发货时间", "支付方式", "商品总价", "订单运费",
+        "店铺优惠", "平台优惠", "实付款", "交易快照", "更多信息", "商品名称", "配送方式", "配送类型", "订单类型")
+    private val detailSkip = setOf("复制", "展开", "收起", "查看", "联系商家", "分享商品", "再买一单", "申请售后",
+        "删除订单", "报销领券", "追加评价", "联系快递员")
+
+    fun detailFields(page: NativePage): List<NativeDetailField> {
+        val visible = page.nodes.filter { it.visible && it.enabled }
+        val leaves = visible.filter { it.childCount == 0 && label(it).isNotBlank() && label(it).length <= 200 }
+        val result = mutableListOf<NativeDetailField>()
+        for (node in leaves) {
+            val name = label(node)
+            if (name !in detailNames) continue
+            val value = leaves.filter { candidate ->
+                candidate !== node && candidate.bounds.size == 4 && node.bounds.size == 4 &&
+                    kotlin.math.abs(candidate.bounds[1] - node.bounds[1]) <= 24 &&
+                    candidate.bounds[0] > node.bounds[2] && label(candidate) !in detailNames && label(candidate) !in detailSkip
+            }.minByOrNull { it.bounds[0] }
+            result.add(NativeDetailField(name, value?.let(::label) ?: "", node.path, node.bounds))
+        }
+        for (node in leaves) {
+            val value = label(node)
+            if (value in detailSkip || value in detailNames) continue
+            result.add(NativeDetailField("", value, node.path, node.bounds))
+        }
+        return result
     }
 
     fun informationRoot(page: NativePage): List<Int>? {

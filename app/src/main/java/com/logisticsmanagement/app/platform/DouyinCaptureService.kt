@@ -448,7 +448,7 @@ class DouyinCaptureService : AccessibilityService() {
     }
 
     internal suspend fun tapScreenText(target: String): NativeActionResult = withContext(Dispatchers.Main.immediate) {
-        val allowed = setOf("更多", "查看物流", "展开全部物流信息", "查看更多物流信息")
+        val allowed = setOf("更多", "查看物流", "展开全部物流信息", "查看更多物流信息", "查看全部物流信息")
         if (target !in allowed) return@withContext NativeActionResult(false, "该文字不在允许点击的读取入口内", "gesture")
         if (DouyinCaptureController.navigationMode) return@withContext NativeActionResult(false, "当前处于正常触摸导航", "gesture")
         val captureId = DouyinCaptureController.captureId

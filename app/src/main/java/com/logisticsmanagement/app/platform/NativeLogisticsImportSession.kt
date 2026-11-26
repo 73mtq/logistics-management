@@ -73,6 +73,11 @@ internal class NativeLogisticsImportSession(private val save: suspend (String, S
         records.add(buildJsonObject {
             put("orderId", orderId); put("source", "ocr"); put("carrier", result.carrier)
             put("trackingNumber", result.trackingNumber); put("status", result.status.name); put("confirmedReadings", readings)
+            put("parcels", JsonArray(result.parcels.map { parcel -> buildJsonObject {
+                put("carrier", parcel.carrier); put("trackingNumber", parcel.trackingNumber)
+            } }))
+            put("times", JsonArray(result.times.map { platformJson.parseToJsonElement(platformJson.encodeToString(it)) }))
+            put("unresolved", JsonArray(result.unresolved.map(::JsonPrimitive)))
             put("events", JsonArray(result.events.map { event -> buildJsonObject {
                 put("time", event.time); put("text", event.text); put("status", event.status)
             } }))

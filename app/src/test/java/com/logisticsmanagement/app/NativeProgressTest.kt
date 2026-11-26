@@ -3,9 +3,14 @@ package com.logisticsmanagement.app
 import com.logisticsmanagement.app.model.ParcelStatus
 import com.logisticsmanagement.app.platform.NativeFieldEvidence
 import com.logisticsmanagement.app.platform.NativeOrderProgress
+import com.logisticsmanagement.app.platform.NativeScopeEvidence
+import com.logisticsmanagement.app.platform.NativeScopeTab
 import com.logisticsmanagement.app.platform.NativeSyncProgress
+import com.logisticsmanagement.app.platform.platformJson
+import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -44,5 +49,23 @@ class NativeProgressTest {
         assertTrue(complete.completeFor("capture-2"))
         assertFalse(complete.copy(blockedCards = mapOf("cycle-2:card" to "未识别")).completeFor("capture-2"))
         assertFalse(complete.copy(listEnded = false).completeFor("capture-2"))
+    }
+
+    @Test fun screensAndScopeEvidenceBelongToOneRound() {
+        val evidence = NativeScopeEvidence("全部订单", listOf(
+            NativeScopeTab("全部", false, "全部", emptyList(), listOf(0, 0), listOf(0, 400, 200, 500))),
+            listOf("selected", "选中描述"))
+        val first = NativeSyncProgress(accountId = "account-real", externalIdentity = "identity", captureId = "capture-1",
+            screensRead = 3, lastScreenNodeCount = 88, lastScreenActions = listOf(4096), scopeEvidence = evidence)
+        val restored = platformJson.decodeFromString<NativeSyncProgress>(platformJson.encodeToString(first))
+        assertEquals(3, restored.screensRead)
+        assertEquals(88, restored.lastScreenNodeCount)
+        assertEquals(listOf(4096), restored.lastScreenActions)
+        assertEquals(evidence, restored.scopeEvidence)
+        val resumed = restored.resumeFor("capture-2")
+        assertEquals(0, resumed.screensRead)
+        assertEquals(0, resumed.lastScreenNodeCount)
+        assertTrue(resumed.lastScreenActions.isEmpty())
+        assertNull(resumed.scopeEvidence)
     }
 }

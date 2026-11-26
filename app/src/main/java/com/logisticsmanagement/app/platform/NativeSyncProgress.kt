@@ -22,10 +22,20 @@ internal data class NativeOrderProgress(val remoteId: String, val title: String?
 }
 
 @Serializable
+internal data class NativeScopeTab(val label: String, val selected: Boolean, val description: String,
+    val supplementalTexts: List<String>, val path: List<Int>, val bounds: List<Int>)
+
+@Serializable
+internal data class NativeScopeEvidence(val title: String?, val tabs: List<NativeScopeTab>,
+    val checkedProperties: List<String> = emptyList())
+
+@Serializable
 internal data class NativeSyncProgress(val version: Int = 1, val accountId: String, val externalIdentity: String?,
     val cycleId: String = UUID.randomUUID().toString(), val captureId: String, val scope: String = "全部",
     val step: String = "等待账号核查", val reason: String = "", val running: Boolean = true,
     val listEnded: Boolean = false, val scopeConfirmed: Boolean = false,
+    val screensRead: Int = 0, val lastScreenNodeCount: Int = 0, val lastScreenActions: List<Int> = emptyList(),
+    val scopeEvidence: NativeScopeEvidence? = null,
     val orders: Map<String, NativeOrderProgress> = emptyMap(), val blockedCards: Map<String, String> = emptyMap(),
     val previousBlocked: Map<String, String> = emptyMap(),
     val terminalEvidence: NativeFieldEvidence? = null, val updatedAt: Long = System.currentTimeMillis()) {
@@ -38,8 +48,10 @@ internal data class NativeSyncProgress(val version: Int = 1, val accountId: Stri
         })
     fun resumeFor(value: String): NativeSyncProgress = copy(captureId = value, cycleId = UUID.randomUUID().toString(), running = true,
         listEnded = false, scopeConfirmed = false, terminalEvidence = null, reason = "", step = "恢复后重新核查账号",
-        blockedCards = emptyMap(), previousBlocked = blockedCards, updatedAt = System.currentTimeMillis())
-    fun message(): String = "已核查 ${orders.size} 笔，新增 ${orders.values.count { it.inserted }} 笔，更新 ${orders.values.count { it.updated }} 笔，" +
+        blockedCards = emptyMap(), previousBlocked = blockedCards, screensRead = 0, lastScreenNodeCount = 0,
+        lastScreenActions = emptyList(), scopeEvidence = null, updatedAt = System.currentTimeMillis())
+    fun message(): String = (if (screensRead > 0) "已读取 ${screensRead} 个屏幕，" else "") +
+        "已核查 ${orders.size} 笔，新增 ${orders.values.count { it.inserted }} 笔，更新 ${orders.values.count { it.updated }} 笔，" +
         "物流已保存 ${orders.values.count { it.logisticsSaved }} 笔，订单待补充 ${orders.values.count { !it.finished }} 笔，页面待核查 ${blockedCards.size} 处；$step" +
         if (reason.isBlank()) "" else "；$reason"
 }
@@ -159,6 +171,11 @@ internal class NativeProgressSession(private val store: NativeSyncProgressStore,
         update(value.copy(externalIdentity = session.identity ?: value.externalIdentity, orders = orders))
     }
     suspend fun step(label: String) = update(value.copy(step = label))
+    suspend fun screenRead(count: Int, nodeCount: Int, actions: List<Int>) =
+        update(value.copy(screensRead = count, lastScreenNodeCount = nodeCount, lastScreenActions = actions))
+    suspend fun scope(evidence: NativeScopeEvidence) = update(value.copy(scopeEvidence = evidence))
+    suspend fun endWithoutTerminal(reason: String) =
+        update(value.copy(running = false, listEnded = false, step = "订单列表未提供结束标志", reason = reason))
     suspend fun confirmScope() = update(value.copy(scopeConfirmed = true, step = "正在读取全部订单"))
     fun complete(): Boolean = value.completeFor(value.captureId)
     suspend fun blocked(key: String, reason: String) = update(value.copy(blockedCards = value.blockedCards + ("${value.cycleId}:$key" to reason)))

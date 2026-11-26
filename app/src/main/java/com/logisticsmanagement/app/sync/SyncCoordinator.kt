@@ -91,7 +91,12 @@ class SyncCoordinator(
             val completed = withTimeoutOrNull(timeoutMillis) { for (scan in scans) session.accept(scan); true }
             withContext(NonCancellable) {
                 val complete = completed == true && runProgress?.complete() == true
-                runProgress?.finishRound(if (completed == null) "本次采集达到执行期限" else if (complete) "本轮采集已完成" else "采集未完成，请继续采集")
+                val endReason = when {
+                    completed == null -> "本次采集达到执行期限"
+                    complete -> "本轮采集已完成"
+                    else -> runProgress?.value?.reason?.takeIf { it.isNotBlank() } ?: "采集未完成，请继续采集"
+                }
+                runProgress?.finishRound(endReason)
                 repository.setSyncState(id, if (complete) AccountState.READY else AccountState.PARTIAL, if (complete) null else session.message(),
                     if (complete) System.currentTimeMillis() else null)
                 report(SyncProgress(id, if (complete) SyncStage.COMPLETED else SyncStage.PARTIAL, session.totals.inserted + session.totals.updated,

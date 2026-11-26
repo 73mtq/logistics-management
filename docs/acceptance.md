@@ -1,6 +1,6 @@
 # 验收记录
 
-更新日期：2026-11-25，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
+更新日期：2026-11-26，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-26 完成 S2 已导入订单物流读取的两轮验证，列表结束标志与未导入订单保持未完成；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
 
 ## 2026-11-25 S1 抖音物流自动导入闭环
 
@@ -19,6 +19,25 @@
 未完成范围：列表完整滚动与“全部”标签选中状态未确认，两轮在目标保存后由测试结束采集；订单列表卡片没有订单号节点，列表直达只用于已导入订单，未导入订单仍需要进入详情；公开仓库移除了真实识别样本 app/src/test/resources/ocr-logistics.txt，样本保存在 work/evidence/platform-logistics-v2/S1/ocr-sample/，git 历史仍包含该文件。
 
 验证：四项 Gradle 命令通过（assembleDebug、assembleDebugAndroidTest、testDebugUnitTest、lintDebug；Lint 0 errors、72 warnings）；主机测试 15 项通过、8 项跳过；两轮仪器测试通过；DouyinOcrLogisticsTest 在配置本机真实样本时通过。
+
+## 2026-11-26 S2 抖音完整订单范围与物流历史
+
+固定流程：打开抖音（首页）→ 商城 → 商城订单（“我的订单”入口，页面以 OCR 文本提供）→ 订单列表；订单卡片“更多”→“查看物流”，物流页读取运单、承运商、状态与轨迹。已导入订单按商品标题匹配后直接读取物流；未导入订单直接查看物流没有订单编号，本轮跳过并记录阻塞；不再逐单进入详情页，也不在进入列表时反复回顶部。
+
+两轮结果（设备 95f79212，应用 1.1.0、versionCode 2，调试签名，APK SHA-256 d66f0815…）：
+
+- 第 1 轮：42.058 秒，orders 3、Shipment 3、TrackingEvent 15，账号 PARTIAL；结束原因“已读取 7 个屏幕，最后一个屏幕有 300 个节点；连续 12 张卡片未匹配已导入订单，平台结束标志未出现，完整范围保持未确认”。
+- 第 2 轮：45.085 秒，同样的订单、包裹与轨迹数量，账号 PARTIAL，原因相同。
+- 数据库比较：两轮 orders、Shipment、SourceRef、TrackingEvent 表一致，result.json 记录 stableTables 四项。
+- 阻塞项：全部标签没有 selected、checked、选中描述与选中指示节点；一个已导入订单卡片没有“更多”入口；列表未出现平台结束标志。
+- 证据：work/evidence/platform-logistics-v2/S2/20261126-1055/（round-1、round-2、result.json、accessibility-before/after）；日志 work/logs/platform-logistics-v2/S2-20261126-1055.log。
+- Pinky 现场复核：work/evidence/pinky/S2/20261126-0952-pinky-observations.md，记录标签无选中属性、列表可滚动、商城页“我的订单”为 OCR 文本。
+
+修正记录：页面更新后“我的订单”入口没有无障碍节点，导航改为节点失败时按 OCR 文本点击；订单卡片按用户流程直接“更多”→“查看物流”；进入列表时移除反复回顶部循环，改用手势向下浏览。
+
+未完成范围：列表结束标志、全部标签选中状态、未导入订单直接物流（列表卡片没有订单编号）、一个已导入订单卡片缺少“更多”入口；完整范围等待后续样本与页面结构确认。
+
+验证：四项 Gradle 命令通过（assembleDebug、assembleDebugAndroidTest、testDebugUnitTest、lintDebug；Lint BUILD SUCCESSFUL）；主机测试 28 项、0 失败、12 跳过（DouyinRangeEvidenceTest 4 项因未配置 S2_EVIDENCE_DIR 跳过）；两轮仪器测试通过（Time 107.711、OK (1 test)）。
 
 ## 已验证的阶段范围
 

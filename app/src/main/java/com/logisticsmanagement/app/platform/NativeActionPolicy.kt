@@ -21,7 +21,7 @@ internal object NativeActionPolicy {
             label == "首页" && hasLabel(page, "我") -> NativeActionPurpose.HOME
             label == "商城" && hasLabel(page, "我") -> NativeActionPurpose.MALL
             label in setOf("我的订单", "我的订单 按钮") -> NativeActionPurpose.ORDERS
-            label == "全部" && DouyinNativeOrders.isList(page) -> NativeActionPurpose.ALL
+            label in setOf("全部", "全部订单", "商城") && DouyinNativeOrders.isList(page) -> NativeActionPurpose.ALL
             NativePaginationRules.cardsOnPage(page).any { it.node == node } -> NativeActionPurpose.ORDER_DETAIL
             label == "展开" && hasLabel(page, "更多信息") && hasLabel(page, "订单编号") && informationScope(page, node) != null -> NativeActionPurpose.ORDER_INFORMATION
             label == "查看物流" && hasLabel(page, "订单编号") -> NativeActionPurpose.LOGISTICS

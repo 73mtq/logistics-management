@@ -27,7 +27,15 @@ internal object DouyinNativeLogistics {
         val precision = if (normalized.substringAfter(' ').count { it == ':' } == 2) "second" else "minute"
         fun result(time: Long?, years: List<Int>, reason: String = "") =
             NativeTrackingTimeEvidence(raw, time, createdAt, capturedAt, years, precision, !full, reason)
-        if (createdAt == null || createdAt > capturedAt) return result(null, emptyList(), "缺少有效的同一订单下单时间区间")
+        if (!full && (createdAt == null || createdAt > capturedAt)) return result(null, emptyList(), "缺少有效的同一订单下单时间区间")
+        if (full && createdAt == null) {
+            val format = DateTimeFormatter.ofPattern(if (precision == "second") "uuuu-MM-dd HH:mm:ss" else "uuuu-MM-dd HH:mm")
+                .withResolverStyle(ResolverStyle.STRICT)
+            val time = try { LocalDateTime.parse(normalized, format).atZone(zone).toInstant().toEpochMilli() }
+                catch (failure: DateTimeParseException) { null }
+            return if (time != null && time <= capturedAt) result(time, listOf(normalized.take(4).toInt())) else result(null, emptyList(), "物流时间不在识别时间之前或日期无效")
+        }
+        if (createdAt == null) return result(null, emptyList(), "缺少有效的同一订单下单时间区间")
         val lower = Instant.ofEpochMilli(createdAt).atZone(zone)
         val upper = Instant.ofEpochMilli(capturedAt).atZone(zone)
         val candidates = mutableListOf<Pair<Int, Long>>()

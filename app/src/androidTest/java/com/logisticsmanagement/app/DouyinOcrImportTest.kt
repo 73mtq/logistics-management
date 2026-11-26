@@ -27,7 +27,8 @@ class DouyinOcrImportTest {
             checkNotNull(DouyinCaptureController.service)
         }
         val screen = withTimeout(30_000) { service.captureScreen() } ?: error("截图识别失败")
-        val parsed = checkNotNull(DouyinOcrLogistics.parse(screen.text, System.currentTimeMillis()))
+        val stored = app.container.repository.getOrders().firstOrNull { it.accountId == accountId && it.remoteId == remoteId }
+        val parsed = checkNotNull(DouyinOcrLogistics.parse(screen.text, System.currentTimeMillis(), stored?.createdAt))
         val account = checkNotNull(app.container.repository.getAccount(accountId))
         val identity = checkNotNull(account.externalIdentity)
         val code = CarrierCodes.resolve(parsed.carrier).orEmpty()

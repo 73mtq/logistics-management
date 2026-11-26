@@ -34,6 +34,7 @@ internal class NativeOrderImportSession(
     private var cardFailure: String? = null
     private var candidate: NativeOrderCandidate? = null
     private var expectedLogistics: String? = null
+    private var expectedCreatedAt: Long? = null
     private val ordinaryIds = mutableSetOf<String>()
     private var navigationIdentity: String? = null
     private val navigationDetails = mutableMapOf<String, Pair<String, NativeOrderCandidate>>()
@@ -45,7 +46,7 @@ internal class NativeOrderImportSession(
     private var pendingOcr: Pair<OcrLogisticsResult, Int>? = null
     private val dateReadings = mutableMapOf<Pair<String, Long>, MutableSet<Int>>()
 
-    fun invalidateIdentity() { identity = null; candidate = null; expectedLogistics = null; pendingOcr = null; logistics?.reset(); progress(this) }
+    fun invalidateIdentity() { identity = null; candidate = null; expectedLogistics = null; expectedCreatedAt = null; pendingOcr = null; logistics?.reset(); progress(this) }
 
     suspend fun knownIdentity(value: String) {
         bind(value)
@@ -58,15 +59,22 @@ internal class NativeOrderImportSession(
             ordinary = true, excluded = false, fields = emptyList()))
     }
 
-    fun prepareOcrLogistics(remoteId: String) {
+    fun prepareOcrLogistics(remoteId: String, createdAt: Long?) {
         expectedLogistics = remoteId
+        expectedCreatedAt = createdAt
         logistics?.expect(remoteId)
-        ordinaryIds.add(remoteId)
-        candidate = candidate?.copy(ordinary = true)
     }
+
+    fun expectedCreatedAt(): Long? = expectedCreatedAt
 
     fun acceptOcrLogistics(result: OcrLogisticsResult, readings: Int) {
         val orderId = expectedLogistics ?: return
+        val problems = result.problems(readings)
+        if (problems.isNotEmpty()) {
+            missing[orderId] = problems
+            fields.add(NativeFieldEvidence("ocrRejected", problems.joinToString("；"), -1, emptyList(), -1))
+            return
+        }
         pendingOcr = result to readings
         ordinaryIds.add(orderId)
         candidate = candidate?.copy(ordinary = true)
@@ -213,7 +221,7 @@ internal class NativeOrderImportSession(
                 val absent = resolved.missing() + (if (identity == null) listOf("本次账号归属核查") else emptyList()) +
                     (if (resolved.status == ParcelStatus.SIGNED && resolved.createdAt != null && dateCount < 2)
                         listOf("下单时间连续两次读取核查") else emptyList())
-                if (absent.isNotEmpty()) missing[incoming.remoteId] = absent
+                if (absent.isNotEmpty()) missing[incoming.remoteId] = (missing[incoming.remoteId].orEmpty() + absent).distinct()
                 else if (stored == null && resolved.status == ParcelStatus.SIGNED &&
                     checkNotNull(resolved.createdAt) < Instant.now().minus(90, ChronoUnit.DAYS).toEpochMilli()) {
                     excluded.add(incoming.remoteId)
