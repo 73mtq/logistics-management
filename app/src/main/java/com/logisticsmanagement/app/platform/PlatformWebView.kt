@@ -322,6 +322,33 @@ internal class PlatformWebView(
         if (!closed) view.evaluateJavascript(script, null)
     }
 
+    suspend fun evaluateAwait(script: String): String {
+        checkMainThread()
+        if (closed) throw AppFailure("平台页面已经关闭，请重新打开", FailureKind.CONFIGURATION)
+        return suspendCancellableCoroutine { continuation ->
+            view.evaluateJavascript(script) { value ->
+                if (continuation.isActive) continuation.resume(value)
+            }
+        }
+    }
+
+    fun tapPage(x: Float, y: Float, pageWidth: Float, pageHeight: Float) {
+        checkMainThread()
+        if (closed || pageWidth <= 0f || pageHeight <= 0f || view.width <= 0 || view.height <= 0) return
+        val px = x * view.width / pageWidth
+        val py = y * view.height / pageHeight
+        val downTime = SystemClock.uptimeMillis()
+        val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, px, py, 0)
+        val up = MotionEvent.obtain(downTime, downTime + 80, MotionEvent.ACTION_UP, px, py, 0)
+        try {
+            view.dispatchTouchEvent(down)
+            view.dispatchTouchEvent(up)
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+    }
+
     fun advanceOrders() {
         evaluate(CaptureScripts.moreOrders)
         if (closed || view.width == 0 || view.height == 0) return

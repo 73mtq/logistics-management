@@ -1,6 +1,6 @@
 # 验收记录
 
-更新日期：2026-11-26，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-26 完成 S2 已导入订单物流读取的两轮验证，列表结束标志与未导入订单保持未完成；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
+更新日期：2026-11-26，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-26 完成 S2 已导入订单物流读取的两轮验证，列表结束标志与未导入订单保持未完成；同日完成 S3 淘宝短信会话恢复与两轮订单物流读取；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
 
 ## 2026-11-25 S1 抖音物流自动导入闭环
 
@@ -38,6 +38,21 @@
 未完成范围：列表结束标志、全部标签选中状态、未导入订单直接物流（列表卡片没有订单编号）、一个已导入订单卡片缺少“更多”入口；完整范围等待后续样本与页面结构确认。
 
 验证：四项 Gradle 命令通过（assembleDebug、assembleDebugAndroidTest、testDebugUnitTest、lintDebug；Lint BUILD SUCCESSFUL）；主机测试 28 项、0 失败、12 跳过（DouyinRangeEvidenceTest 4 项因未配置 S2_EVIDENCE_DIR 跳过）；两轮仪器测试通过（Time 107.711、OK (1 test)）。
+
+## 2026-11-26 S3 淘宝会话恢复与订单物流读取
+
+固定流程：应用内淘宝登录页 →“使用其他账号登录”→“短信验证码登录”→ 选择账号绑定号码 → 获取验证码 → 通知监听捕获并填入 → 提交登录。登录成功后由 SyncCoordinator 完成 MTOP 订单分页与 SSR 物流读取。
+
+两轮结果（设备 95f79212，应用 1.1.0、versionCode 2，APK SHA-256 9c1f4c69…）：
+
+- 第 1 轮：淘宝订单 3、来源 3、包裹 2、轨迹 26；合并后生产库 orders 6、Shipment 5、TrackingEvent 41、TrackingQueue 0，账号 READY。
+- 第 2 轮：同样的订单、包裹与轨迹数量，无新增记录。
+- 包裹：申通快递 773449181872341 与 773449185781058，状态已签收，轨迹 26 条。
+- 失败场景：删除浏览数据后同步得到 NEEDS_LOGIN；T07 的 FAIL_SYS_ILLEGAL_ACCESS 真实响应回放得到 NEEDS_VERIFICATION；安全验证文本识别由 TaobaoLoginProbeTest 5 项通过。
+- 证据：work/evidence/platform-logistics-v2/S3/20261126-session/（db-before、db-after-round2、login-steps.json、result.json）；登录步骤 7834 字节，SHA-256 97f82db5…。
+- 验证：四项 Gradle 命令通过（使用本机 JDK 17，Java 24 下 testDebugUnitTest 无法创建任务）。
+
+未完成范围：淘宝网页滚动分页与部分服务详情；通知监听受 HyperOS 自启动管理限制，应用进程重启后需要重新绑定；原生页面读取没有启用。
 
 ## 已验证的阶段范围
 

@@ -25,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
 import java.io.IOException
 
 class PlatformBrowserActivity : ComponentActivity() {
@@ -118,13 +119,39 @@ class PlatformBrowserActivity : ComponentActivity() {
         val adapter = registry.adapter(selected.platform)
         val browser = createSession(selected, adapter)
         val mode = intent.getStringExtra("mode") ?: "login"
+        if (mode == "login") SmsCodeInbox.begin()
         browser.load(initialUrl(mode, selected, adapter))
         lifecycleScope.launch {
             try {
                 for (capture in browser.messages) handleCapture(selected, adapter, capture)
             } catch (failure: AppFailure) { recordFailure(failure) }
         }
+        if (mode == "login" && selected.platform == Platform.TAOBAO) assistTaobaoLogin(selected, browser)
         if (mode == "login" && selected.platform != Platform.DOUYIN) pollLoginSession(selected)
+    }
+
+    private fun assistTaobaoLogin(selected: Account, browser: PlatformWebView) = lifecycleScope.launch {
+        val flow = TaobaoLoginFlow(browser, this@PlatformBrowserActivity, selected, { hasLoginSession(selected) }) { message -> status.text = message }
+        try {
+            delay(1_500)
+            when (val result = flow.run(LOGIN_TIMEOUT_MILLIS)) {
+                TaobaoLoginResult.Succeeded -> {
+                    registry.saveAccountSecret(selected, LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
+                    updateState(AccountState.READY, null)
+                    val stored = checkNotNull(registry.repository.getAccount(selected.id))
+                    registry.repository.saveAccount(stored.copy(lastAttemptAt = null))
+                    status.text = "淘宝登录会话已经保存"
+                    setResult(RESULT_OK)
+                    finish()
+                }
+                is TaobaoLoginResult.Blocked -> {
+                    registry.saveAccountSecret(selected, LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
+                    val state = if (result.kind == FailureKind.NEEDS_LOGIN) AccountState.NEEDS_LOGIN else AccountState.NEEDS_VERIFICATION
+                    updateState(state, result.message)
+                    status.text = result.message
+                }
+            }
+        } catch (failure: AppFailure) { recordFailure(failure) }
     }
 
     private fun createSession(selected: Account, adapter: PlatformAdapter): PlatformWebView {
@@ -150,6 +177,9 @@ class PlatformBrowserActivity : ComponentActivity() {
     }
 
     private suspend fun handleCapture(selected: Account, adapter: PlatformAdapter, capture: CapturedResponse) {
+        if (capture.kind == "redirect" || capture.kind == "pageFinished") {
+            android.util.Log.i("PlatformCapture", capture.kind + " " + capture.url + " " + capture.body.take(80))
+        }
         registry.rememberCapture(selected, capture)
         if (selected.platform == Platform.DOUYIN && capture.kind == "response") {
             registry.rememberDouyinPage(selected, session?.currentUrl.orEmpty())
@@ -241,5 +271,15 @@ class PlatformBrowserActivity : ComponentActivity() {
 
     override fun onPause() { session?.view?.onPause(); super.onPause() }
     override fun onResume() { super.onResume(); session?.view?.onResume() }
-    override fun onDestroy() { session?.close(); session = null; super.onDestroy() }
+    override fun onDestroy() {
+        session?.close()
+        session = null
+        SmsCodeInbox.end()
+        super.onDestroy()
+    }
+
+    private companion object {
+        const val LOGIN_TIMEOUT_MILLIS = 180_000L
+        const val LOGIN_EVIDENCE = "taobao.login"
+    }
 }
