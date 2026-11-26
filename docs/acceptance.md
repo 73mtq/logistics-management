@@ -1,6 +1,6 @@
 # 验收记录
 
-更新日期：2026-11-26，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-26 完成 S2 已导入订单物流读取的两轮验证，列表结束标志与未导入订单保持未完成；同日完成 S3 淘宝短信会话恢复与两轮订单物流读取；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
+更新日期：2026-11-26，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-26 完成 S2 已导入订单物流读取的两轮验证，列表结束标志与未导入订单保持未完成；同日完成 S3 淘宝短信会话恢复与两轮订单物流读取；同日完成 S4 拼多多短信会话恢复与两轮订单物流读取（20 笔订单、24 条轨迹、查询队列 0，分页与标签计数通过，平台结束标志与原生页面对照未完成）；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
 
 ## 2026-11-25 S1 抖音物流自动导入闭环
 
@@ -53,6 +53,30 @@
 - 验证：四项 Gradle 命令通过（使用本机 JDK 17，Java 24 下 testDebugUnitTest 无法创建任务）。
 
 未完成范围：淘宝网页滚动分页与部分服务详情；通知监听受 HyperOS 自启动管理限制，应用进程重启后需要重新绑定；原生页面读取没有启用。
+
+## 2026-11-26 S4 拼多多会话恢复与订单物流读取
+
+固定流程：应用内拼多多登录页 →「手机登录」→ 勾选「同意 服务协议与隐私政策」→ 填入本机号码 132****2972 → 发送短信验证码 → 通知监听捕获并填入 → 提交登录。登录接口返回 uid 与 access_token，应用把访问令牌写入该账号 profile 的 Cookie（PDDAccessToken、pdduid、pdd_user_id、pdd_user_uin），会话检测通过后账号为 READY。同步读取订单页，逐个标签核对 type 与 page，写入订单、来源并按查询队列读取物流。
+
+两轮结果（设备 95f79212，应用 1.1.0、versionCode 2，调试签名，APK SHA-256 42e5fbbb…）：
+
+- 第 1 轮：189.007 秒，orders 20、SourceRef 20、Shipment 20、TrackingEvent 23，newOrders 15、newSources 15，查询队列 1，账号 PARTIAL。
+- 第 2 轮：91.226 秒，orders 20、SourceRef 20、Shipment 20、TrackingEvent 24，newOrders 0、newSources 0，查询队列 0，账号 PARTIAL。
+- 最终确认同步：85.861 秒，orders 20、sources 20、events 24、查询队列 0；PddPages 没有分页异常。
+
+分页记录（PddPages）：全部 type=all，pages [1]、counts [10]、loads 4、distinct 40、endedBy no-progress；待收货 unreceived 2；待发货 unshipping 0；待付款 unpaidV2 0；评价 unrated 1；待分享 pending_share 不存在。H5 订单列表以重复请求第 1 页的方式增量加载，请求体 page 保持 1；平台没有结束标志，完整范围保持未确认。
+
+物流：19 个来源一次同步成功，1 个订单的物流页承运商为「邮政快递包裹」，旧正则只接受以快递、速递、速运、物流结尾的承运商而失败。按真实页面调整正则后 PddTrackingEvidenceTest#queryRealOrder 通过，1 条轨迹、状态 SIGNED，查询队列清空。
+
+失败场景：清除拼多多 profile 浏览数据后同步得到 NEEDS_LOGIN；登录页安全验证文本由 PddLoginProbeTest 6 项覆盖；没有取得拼多多业务错误码样本，未做错误码回放。
+
+页面对照：H5 登录后拼多多 App 提示「在其他设备上通过短信验证码进行了登录，当前设备已退出登录」，原生订单与物流页无法继续读取。登录前 Pinky 预检记录待收货 2、评价 1，与 H5 标签计数一致；原生页面计数对照与原生物流对照记为未完成。
+
+证据：work/evidence/platform-logistics-v2/S4/20261126-1545/（db-before、db-after-round1、db-after-round2、db-final、db-final3、device-files、tracking-failed-order.json、preflight.txt、apk-after.sha256）；Pinky 记录 work/evidence/pinky/S4/（预检报告、观察记录、页面核对记录）。登录步骤 18 条保存在设备并通过 exportLogin 导出，手机号掩码、验证码不入文件。
+
+验证：四项 Gradle 命令通过（assembleDebug、assembleDebugAndroidTest、testDebugUnitTest、lintDebug）；主机测试 39 项、0 失败、12 跳过；装置测试 PddPaginationEvidenceTest 1 项、PddSessionEvidenceTest 4 项、PddTrackingEvidenceTest#queryRealOrder 1 项通过；Pinky 任务与 instrument 串行执行。
+
+未完成范围：平台结束标志、待分享标签、两条订单的状态提示文本未命中现有映射、原生 App 页面计数与原生物流对照、拼多多单设备登录策略对原生 App 的影响。
 
 ## 已验证的阶段范围
 
@@ -114,6 +138,7 @@ T15四项Gradle检查通过，2分20秒，1项执行82项保持；主机测试�
 - 真实共享来源、别名、非空历史备注和归档迁移，以及缺少被删除平台来源的清理分支。
 - 在途、跨年、多包裹、新订单、账号不匹配、登录及安全验证的部分原生场景。
 - 抖音完整列表结束、两笔候选必要字段、完整物流历史到底及无障碍自动重连。
+- 拼多多平台结束标志、待分享标签、两条订单的状态提示文本、原生 App 页面对照及单设备登录策略。
 - 真实取件码复制、未关联抖音订单卡片、外部平台导航及MainActivity启动与自动同步的完整联合流程。
 - 进度密文损坏、版本不兼容、WorkManager实际系统调度及部分账号移除场景。
 - 跨暂停无障碍启用列表变化归因、Jev整体速度和人工介入改善。

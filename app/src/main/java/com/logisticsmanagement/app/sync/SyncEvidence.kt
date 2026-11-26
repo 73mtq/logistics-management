@@ -12,4 +12,5 @@ internal data class SyncEvidence(
     val onCapture: (String?, CapturedResponse) -> Unit = { _, _ -> },
     val onCheckpoint: suspend (SyncCheckpoint) -> Unit = {},
     val onTrackingSaved: suspend (SourceRef, ImportedShipment) -> Unit = { _, _ -> },
+    val onNote: (String) -> Unit = {},
 )

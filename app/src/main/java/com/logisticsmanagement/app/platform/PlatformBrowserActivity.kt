@@ -127,7 +127,8 @@ class PlatformBrowserActivity : ComponentActivity() {
             } catch (failure: AppFailure) { recordFailure(failure) }
         }
         if (mode == "login" && selected.platform == Platform.TAOBAO) assistTaobaoLogin(selected, browser)
-        if (mode == "login" && selected.platform != Platform.DOUYIN) pollLoginSession(selected)
+        if (mode == "login" && selected.platform == Platform.PDD) assistPddLogin(selected, browser)
+        if (mode == "login" && selected.platform != Platform.DOUYIN && selected.platform != Platform.PDD) pollLoginSession(selected)
     }
 
     private fun assistTaobaoLogin(selected: Account, browser: PlatformWebView) = lifecycleScope.launch {
@@ -146,6 +147,46 @@ class PlatformBrowserActivity : ComponentActivity() {
                 }
                 is TaobaoLoginResult.Blocked -> {
                     registry.saveAccountSecret(selected, LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
+                    val state = if (result.kind == FailureKind.NEEDS_LOGIN) AccountState.NEEDS_LOGIN else AccountState.NEEDS_VERIFICATION
+                    updateState(state, result.message)
+                    status.text = result.message
+                }
+            }
+        } catch (failure: AppFailure) { recordFailure(failure) }
+    }
+
+    private fun persistPddSession(selected: Account, body: String) {
+        val root = platformJson.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject
+            ?: throw AppFailure("拼多多登录响应结构尚未支持", FailureKind.UNSUPPORTED_RESPONSE)
+        val uid = root.text("uid").ifBlank { root.text("pdduid") }
+        val token = root.text("access_token")
+        val uin = root.text("uin")
+        if (uid.isBlank() || token.isBlank()) return
+        val cookies = registry.profiles.profile(selected).cookieManager
+        cookies.setCookie("https://mobile.yangkeduo.com", "PDDAccessToken=" + token + "; Path=/; Secure")
+        cookies.setCookie("https://mobile.yangkeduo.com", "pdduid=" + uid + "; Path=/; Secure")
+        cookies.setCookie("https://mobile.yangkeduo.com", "pdd_user_id=" + uid + "; Path=/; Secure")
+        if (uin.isNotBlank()) cookies.setCookie("https://mobile.yangkeduo.com", "pdd_user_uin=" + uin + "; Path=/; Secure")
+        cookies.flush()
+        android.util.Log.i("PddLoginResponse", "session cookies stored")
+    }
+
+    private fun assistPddLogin(selected: Account, browser: PlatformWebView) = lifecycleScope.launch {
+        val flow = PddLoginFlow(browser, this@PlatformBrowserActivity, selected, { hasLoginSession(selected) }) { message -> status.text = message }
+        try {
+            delay(1_500)
+            when (val result = flow.run(LOGIN_TIMEOUT_MILLIS)) {
+                PddLoginResult.Succeeded -> {
+                    registry.saveAccountSecret(selected, PDD_LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
+                    updateState(AccountState.READY, null)
+                    val stored = checkNotNull(registry.repository.getAccount(selected.id))
+                    registry.repository.saveAccount(stored.copy(lastAttemptAt = null))
+                    status.text = "拼多多登录会话已经保存"
+                    setResult(RESULT_OK)
+                    finish()
+                }
+                is PddLoginResult.Blocked -> {
+                    registry.saveAccountSecret(selected, PDD_LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
                     val state = if (result.kind == FailureKind.NEEDS_LOGIN) AccountState.NEEDS_LOGIN else AccountState.NEEDS_VERIFICATION
                     updateState(state, result.message)
                     status.text = result.message
@@ -177,6 +218,13 @@ class PlatformBrowserActivity : ComponentActivity() {
     }
 
     private suspend fun handleCapture(selected: Account, adapter: PlatformAdapter, capture: CapturedResponse) {
+        if (selected.platform == Platform.PDD && capture.kind == "response" &&
+            (capture.url.contains("login", true) || capture.url.contains("auth", true) || capture.url.contains("passport", true))) {
+            android.util.Log.i("PddLoginResponse", "url=" + capture.url.take(220) + " status=" + capture.status)
+        }
+        if (selected.platform == Platform.PDD && capture.kind == "response" && capture.url.contains("login_mobile")) {
+            persistPddSession(selected, capture.body)
+        }
         if (capture.kind == "redirect" || capture.kind == "pageFinished") {
             android.util.Log.i("PlatformCapture", capture.kind + " " + capture.url + " " + capture.body.take(80))
         }
@@ -281,5 +329,6 @@ class PlatformBrowserActivity : ComponentActivity() {
     private companion object {
         const val LOGIN_TIMEOUT_MILLIS = 180_000L
         const val LOGIN_EVIDENCE = "taobao.login"
+        const val PDD_LOGIN_EVIDENCE = "pdd.login"
     }
 }

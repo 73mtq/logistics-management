@@ -51,110 +51,6 @@ internal sealed interface TaobaoLoginResult {
     data class Blocked(val message: String, val kind: FailureKind) : TaobaoLoginResult
 }
 
-internal object TaobaoLoginScripts {
-    private const val VISIBLE = "(function(e){var r=e.getBoundingClientRect();var s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';})"
-
-    val probe = """
-        (function() {
-          var visible = $VISIBLE;
-          var inputs = Array.prototype.map.call(document.querySelectorAll('input'), function(e, index) {
-            return {index: index, placeholder: e.placeholder || '', type: e.type || 'text', filled: !!e.value, visible: visible(e)};
-          }).filter(function(e) { return e.visible; });
-          var buttons = Array.prototype.map.call(document.querySelectorAll('a,button,div,span'), function(e) {
-            return visible(e) ? (e.innerText || '').trim() : '';
-          }).filter(function(t) { return t.length > 0 && t.length <= 12; });
-          var checkboxes = Array.prototype.map.call(document.querySelectorAll('input[type=checkbox]'), function(e, index) {
-            var holder = e.closest('label') || e.parentElement;
-            return {index: index, checked: !!e.checked, label: holder ? (holder.innerText || '').trim().slice(0, 60) : '', visible: visible(e)};
-          });
-          var agree = '';
-          var nodes = Array.prototype.filter.call(document.querySelectorAll('div,span,label'), function(e) {
-            return visible(e) && (e.innerText || '').indexOf('已阅读并同意') >= 0;
-          });
-          if (nodes.length) {
-            nodes.sort(function(a, b) { return (a.innerText || '').length - (b.innerText || '').length; });
-            if (nodes[0].parentElement) agree = nodes[0].parentElement.outerHTML.slice(0, 800);
-          }
-          return JSON.stringify({url: location.href, text: document.body ? document.body.innerText : '', buttons: buttons.filter(function(t, i) { return buttons.indexOf(t) === i; }), inputs: inputs, checkboxes: checkboxes, agreeHtml: agree});
-        })();
-    """
-
-    fun click(label: String): String {
-        val safe = label.js()
-        return """
-        (function() {
-          var visible = $VISIBLE;
-          var matches = Array.prototype.filter.call(document.querySelectorAll('a,button,div,span'), function(e) {
-            return visible(e) && (e.innerText || '').trim() === '$safe';
-          });
-          if (!matches.length) return 'missing';
-          matches.sort(function(a, b) { var x = a.getBoundingClientRect(); var y = b.getBoundingClientRect(); return x.width * x.height - y.width * y.height; });
-          var target = matches[0];
-          var rect = target.getBoundingClientRect();
-          var cx = rect.left + rect.width / 2;
-          var cy = rect.top + rect.height / 2;
-          ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function(type) {
-            var event = type.indexOf('pointer') === 0
-              ? new PointerEvent(type, {bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, pointerType: 'touch'})
-              : new MouseEvent(type, {bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0});
-            target.dispatchEvent(event);
-          });
-          return target.tagName + '|' + String(target.className || '').slice(0, 40) + '|' + (target.innerText || '').trim().slice(0, 16);
-        })();
-    """
-    }
-
-    fun locate(label: String): String {
-        val safe = label.js()
-        return """
-        (function() {
-          var visible = $VISIBLE;
-          var matches = Array.prototype.filter.call(document.querySelectorAll('a,button,div,span'), function(e) {
-            return visible(e) && (e.innerText || '').trim() === '$safe';
-          });
-          if (!matches.length) return 'missing';
-          matches.sort(function(a, b) { var x = a.getBoundingClientRect(); var y = b.getBoundingClientRect(); return x.width * x.height - y.width * y.height; });
-          var target = matches[0];
-          var rect = target.getBoundingClientRect();
-          return JSON.stringify({x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, w: document.documentElement.clientWidth, h: document.documentElement.clientHeight, tag: target.tagName, cls: String(target.className || '').slice(0, 40)});
-        })();
-    """
-    }
-
-    fun fill(index: Int, value: String): String {
-        val safe = value.js()
-        return """
-        (function() {
-          var input = document.querySelectorAll('input')[$index];
-          if (!input) return 'missing';
-          var proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-          var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-          setter.call(input, '$safe');
-          input.dispatchEvent(new Event('input', {bubbles: true}));
-          input.dispatchEvent(new Event('change', {bubbles: true}));
-          input.blur();
-          return 'filled';
-        })();
-    """
-    }
-
-    val agree = """
-        (function() {
-          var box = document.getElementById('fm-agreement-checkbox');
-          if (!box) {
-            box = Array.prototype.filter.call(document.querySelectorAll('input[type=checkbox]'), function(e) { return !e.checked; })[0];
-          }
-          if (box) {
-            if (!box.checked) box.click();
-            return box.checked ? 'checked' : 'clicked-unchecked';
-          }
-          return 'missing';
-        })();
-    """
-
-    private fun String.js(): String = replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-}
-
 internal class TaobaoLoginFlow(
     private val browser: PlatformWebView,
     private val context: Context,
@@ -275,7 +171,7 @@ internal class TaobaoLoginFlow(
         }
         if (probe.phoneInput != null || probe.sendCode != null) {
             if (probe.checkboxes.any { !it.checked }) {
-                val result = browser.evaluateAwait(TaobaoLoginScripts.agree)
+                val result = browser.evaluateAwait(LoginPageScripts.agree)
                 step(probe.url, "agree", result)
                 delay(600)
                 return null
@@ -346,14 +242,14 @@ internal class TaobaoLoginFlow(
     }
 
     private suspend fun probe(): TaobaoLoginProbe? {
-        val raw = withTimeoutOrNull(4_000) { browser.evaluateAwait(TaobaoLoginScripts.probe) } ?: return null
+        val raw = withTimeoutOrNull(4_000) { browser.evaluateAwait(LoginPageScripts.probe) } ?: return null
         val inner = (platformJson.parseToJsonElement(raw) as? JsonPrimitive)?.contentOrNull.orEmpty()
         if (inner.isBlank()) return null
         return platformJson.decodeFromString(inner)
     }
 
     private suspend fun click(label: String, url: String) {
-        val raw = withTimeoutOrNull(4_000) { browser.evaluateAwait(TaobaoLoginScripts.locate(label)) }
+        val raw = withTimeoutOrNull(4_000) { browser.evaluateAwait(LoginPageScripts.locate(label)) }
         if (raw == null) {
             step(url, "tap:$label", "timeout")
             return
@@ -369,7 +265,7 @@ internal class TaobaoLoginFlow(
     }
 
     private suspend fun fill(index: Int, value: String, url: String) {
-        val result = withTimeoutOrNull(4_000) { browser.evaluateAwait(TaobaoLoginScripts.fill(index, value)) }
+        val result = withTimeoutOrNull(4_000) { browser.evaluateAwait(LoginPageScripts.fill(index, value)) }
             ?: throw AppFailure("淘宝登录页没有响应输入操作", FailureKind.UNSUPPORTED_RESPONSE)
         step(url, "fill:$index", if (result.contains("filled")) "filled:" + value.length else result)
     }

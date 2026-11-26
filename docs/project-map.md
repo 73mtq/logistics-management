@@ -52,7 +52,7 @@ sequenceDiagram
     Sync->>Repo: 保存READY、PARTIAL或失败状态
 ```
 
-京东和拼多多的网页读取位于 `BrowserAdapters.kt`，淘宝位于 `TaobaoAdapter.kt`；账号 profile 及官方来源检查由平台模块维护。
+京东和拼多多的网页读取位于 `BrowserAdapters.kt`，淘宝位于 `TaobaoAdapter.kt`；拼多多登录与分页在 `PddLogin.kt`、`PddPagination.kt`，共享登录页面脚本在 `LoginPageScripts.kt`；账号 profile 及官方来源检查由平台模块维护。
 
 ## 抖音采集
 

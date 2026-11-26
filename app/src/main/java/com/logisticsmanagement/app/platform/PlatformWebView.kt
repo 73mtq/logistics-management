@@ -349,6 +349,26 @@ internal class PlatformWebView(
         }
     }
 
+    fun swipePage(fromX: Float, fromY: Float, toX: Float, toY: Float, pageWidth: Float, pageHeight: Float) {
+        checkMainThread()
+        if (closed || pageWidth <= 0f || pageHeight <= 0f || view.width <= 0 || view.height <= 0) return
+        val x1 = fromX * view.width / pageWidth
+        val y1 = fromY * view.height / pageHeight
+        val x2 = toX * view.width / pageWidth
+        val y2 = toY * view.height / pageHeight
+        val downTime = SystemClock.uptimeMillis()
+        fun dispatch(time: Long, action: Int, x: Float, y: Float) {
+            val event = MotionEvent.obtain(downTime, time, action, x, y, 0)
+            try { view.dispatchTouchEvent(event) } finally { event.recycle() }
+        }
+        dispatch(downTime, MotionEvent.ACTION_DOWN, x1, y1)
+        for (index in 1..10) {
+            val fraction = index / 10f
+            dispatch(downTime + (index * 30).toLong(), MotionEvent.ACTION_MOVE, x1 + (x2 - x1) * fraction, y1 + (y2 - y1) * fraction)
+        }
+        dispatch(downTime + 340, MotionEvent.ACTION_UP, x2, y2)
+    }
+
     fun advanceOrders() {
         evaluate(CaptureScripts.moreOrders)
         if (closed || view.width == 0 || view.height == 0) return

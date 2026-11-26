@@ -47,8 +47,9 @@ T15及之后新建阶段采用[Jev辅助规则](docs/jev-workflow.md)，明确�
 
 ## 开发期 Pinky 辅助
 
-开发期可以使用[Pinky](docs/pinky-workflow.md)的 MCP 工具操作测试设备，用于页面探索、失败复现与日志读取。Pinky 不进入 App 依赖与生产采集路径；正式验收仍使用 instrument 测试、数据库副本与真实页面证据。
+开发期使用[Pinky](docs/pinky-workflow.md)的 MCP 工具操作测试设备；手机界面操作、页面导航与页面证据采集默认使用 Pinky，包括页面探索、失败复现与日志读取。Pinky 不进入 App 依赖与生产采集路径；构建、安装、instrument 与数据库副本仍使用 adb，两类操作串行执行；正式验收仍使用 instrument 测试、数据库副本与真实页面证据。
 
 - Pinky 任务与 instrument 测试、生产采集串行执行；任务前后记录安装包指纹、无障碍启用列表与数据库状态。
 - 读屏文本、截图与任务报告保存在本机忽略目录 `work/evidence/pinky/`，不进入公开仓库；真实订单号、运单号与地址不写入文档与提交信息。
 - 需要登录、验证码、授权或系统设置变更时由用户在手机完成。
+- Pinky 网关不可用、首次批准未完成或工具超时时停止设备执行并报告；不使用 adb shell input、uiautomator dump 一类手工驱动替代手机操作。

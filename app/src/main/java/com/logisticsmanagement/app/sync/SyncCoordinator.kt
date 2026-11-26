@@ -150,6 +150,11 @@ class SyncCoordinator(
             activeJobs[id] = job
             var totals = IngestResult()
             val tracking = TrackingRun()
+            val notes = mutableListOf<String>()
+            val scopedEvidence = evidence.copy(onNote = { note ->
+                val value = note.trim()
+                if (value.isNotEmpty() && notes.size < 5 && value !in notes) notes += value.take(120)
+            })
             val deadline = SystemClock.elapsedRealtime() + timeoutMillis
             try {
                 withContext(NonCancellable) {
@@ -158,7 +163,7 @@ class SyncCoordinator(
                 }
                 report(SyncProgress(id, SyncStage.IMPORTING, message = "正在读取订单", pending = resumedIds.size))
                 val completed = withTimeoutOrNull(timeoutMillis) {
-                    val adapter = readOrders(account, evidence) { batch ->
+                    val adapter = readOrders(account, scopedEvidence) { batch ->
                         withContext(NonCancellable) { totals += repository.ingest(account, batch) }
                         report(SyncProgress(id, SyncStage.IMPORTING, totals.inserted + totals.updated,
                             message = "${totals.description}，正在读取后续页面", result = totals,
@@ -170,10 +175,10 @@ class SyncCoordinator(
                     val prepared = repository.prepareTracking(id)
                     val queue = prepared.filter { it.sourceId in resumedIds } + prepared.filterNot { it.sourceId in resumedIds }
                     tracking.total = queue.size
-                    trackShipments(account, adapter, queue, totals, deadline, evidence, tracking)
+                    trackShipments(account, adapter, queue, totals, deadline, scopedEvidence, tracking)
                     true
                 }
-                finishSync(account, completed == null, totals, tracking)
+                finishSync(account, completed == null, totals, tracking, notes)
             } catch (error: AppFailure) {
                 report(SyncProgress(id, SyncStage.FAILED, totals.inserted + totals.updated, tracking.updated, tracking.total,
                     checkNotNull(error.message), result = totals, trackingFailures = tracking.failures.toList(),
@@ -212,7 +217,7 @@ class SyncCoordinator(
         onBatch: suspend (OrderBatch) -> Unit): PlatformAdapter {
         val adapter = platforms.adapter(account.platform)
         when (adapter) {
-            is PddAdapter -> adapter.syncWithEvidence(account, { evidence.onCapture(null, it) }, onBatch)
+            is PddAdapter -> adapter.syncWithEvidence(account, { evidence.onCapture(null, it) }, evidence.onNote, onBatch)
             is BrowserAdapter -> adapter.sync(account, { evidence.onCapture(null, it) }, onBatch)
             is TaobaoAdapter -> adapter.sync(account, { evidence.onCapture(null, it) }, onBatch)
             else -> adapter.sync(account, onBatch)
@@ -268,11 +273,12 @@ class SyncCoordinator(
         }
     }
 
-    private suspend fun finishSync(account: Account, timedOut: Boolean, imported: IngestResult, tracking: TrackingRun) {
+    private suspend fun finishSync(account: Account, timedOut: Boolean, imported: IngestResult, tracking: TrackingRun, notes: List<String>) {
         val pending = if (account.captureMode == CaptureMode.WEB) repository.pendingTracking(account.id).size else 0
-        val partial = timedOut || pending > 0
+        val partial = timedOut || pending > 0 || notes.isNotEmpty()
         val state = if (partial) AccountState.PARTIAL else AccountState.READY
         val message = (if (timedOut) "本次更新达到执行期限；" else "") +
+            (if (notes.isNotEmpty()) "分页：" + notes.joinToString("；") + "；" else "") +
             "${imported.description}；物流成功 ${tracking.updated} 个，失败 ${tracking.failures.size} 个，待查询 $pending 个"
         repository.setSyncState(account.id, state, if (partial) message else null,
             if (partial) null else System.currentTimeMillis())
