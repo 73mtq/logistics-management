@@ -59,7 +59,7 @@ class DouyinLogisticsAutomationTest {
         container.settings.save(settings.copy(nativeEvidenceVerbose = true))
         DouyinCaptureController.clearOcrEvidence()
         val captureId = "S1R" + round + "T" + System.currentTimeMillis()
-        val targetId = arguments.getString("targetOrderId") ?: "6918361666413145327"
+        val targetId = arguments.getString("targetOrderId")?.takeIf { it.isNotBlank() } ?: error("缺少 targetOrderId 参数")
         val captureTimeout = arguments.getString("captureTimeoutMillis")?.toLongOrNull() ?: 480_000L
         val expectedTracking = arguments.getString("trackingNumber")?.takeIf { it.isNotBlank() }
         try {

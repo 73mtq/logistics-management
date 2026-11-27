@@ -117,7 +117,7 @@ run_round() {
   "$ADB" shell am instrument -w -r \
     -e class com.logisticsmanagement.app.DouyinLogisticsAutomationTest#importLogisticsAutomatically \
     -e round "$round" \
-    -e targetOrderId "${TARGET_ORDER_ID:-6918361666413145327}" \
+    -e targetOrderId "${TARGET_ORDER_ID:?需要设置 TARGET_ORDER_ID}" \
     "${extra[@]+"${extra[@]}"}" \
     "$TEST_PKG/androidx.test.runner.AndroidJUnitRunner" | tee "$log"
 }

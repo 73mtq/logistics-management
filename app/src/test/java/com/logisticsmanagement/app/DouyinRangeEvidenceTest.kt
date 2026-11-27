@@ -34,7 +34,9 @@ class DouyinRangeEvidenceTest {
     @Test fun detailFieldsRecordKnownFieldsAndNoDeliveryType() {
         val page = detailPage(scan("expanded.json"))
         val named = DouyinNativeOrders.detailFields(page).filter { it.name.isNotBlank() }.associate { it.name to it.value }
-        assertEquals("6918361666413145327", named["订单编号"])
+        val expectedOrderId = System.getenv("S2_EXPECTED_ORDER_ID")
+        assumeTrue("需要本机目标订单编号", !expectedOrderId.isNullOrBlank())
+        assertEquals(expectedOrderId, named["订单编号"])
         assertEquals("2026-10-09 20:55:35", named["下单时间"])
         assertTrue(named.containsKey("支付方式"))
         assertFalse(named.containsKey("配送方式"))

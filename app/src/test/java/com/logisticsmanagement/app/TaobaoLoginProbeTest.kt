@@ -24,7 +24,7 @@ class TaobaoLoginProbeTest {
     }
 
     @Test fun codeModeUsesSingleTelInput() {
-        val probe = TaobaoLoginProbe("https://login.m.taobao.com/", "已向 +86 13281702972 发送验证码",
+        val probe = TaobaoLoginProbe("https://login.m.taobao.com/", "已向 +86 13800000000 发送验证码",
             emptyList(), listOf(TaobaoLoginInput(0, "", "tel", false)))
         assertNull(probe.phoneInput)
         assertEquals(0, probe.codeInput?.index)
