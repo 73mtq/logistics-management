@@ -1,6 +1,6 @@
 # 验收记录
 
-更新日期：2026-11-26，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-26 完成 S2 已导入订单物流读取的两轮验证，列表结束标志与未导入订单保持未完成；同日完成 S3 淘宝短信会话恢复与两轮订单物流读取；同日完成 S4 拼多多短信会话恢复与两轮订单物流读取（20 笔订单、24 条轨迹、查询队列 0，分页与标签计数通过，平台结束标志与原生页面对照未完成）；同日完成 S5 京东短信会话恢复与订单页迁移适配（列表单次读取 50 笔去重、36 笔排除、1 笔 90 天内订单写入生产库，物流 25 条轨迹，两轮 21.079 秒与 19.268 秒稳定，清除浏览数据后 NEEDS_LOGIN 与重新登录 READY 均通过）；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
+更新日期：2026-11-27，Asia/Shanghai。当前版本1.1.0、versionCode2、Room schema v2。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-26 完成 S2 已导入订单物流读取的两轮验证，列表结束标志与未导入订单保持未完成；同日完成 S3 淘宝短信会话恢复与两轮订单物流读取；同日完成 S4 拼多多短信会话恢复与两轮订单物流读取（20 笔订单、24 条轨迹、查询队列 0，分页与标签计数通过，平台结束标志与原生页面对照未完成）；同日完成 S5 京东短信会话恢复与订单页迁移适配（列表单次读取 50 笔去重、36 笔排除、1 笔 90 天内订单写入生产库，物流 25 条轨迹，两轮 21.079 秒与 19.268 秒稳定，清除浏览数据后 NEEDS_LOGIN 与重新登录 READY 均通过）；2026-11-27 完成 S6 数据保留、后台调度与账号移除（京东主账号移除、凭据 6→4、profile 3→2、业务表 27/26/27/90 保持、后台任务 0→3→2→0、共享来源清理与移除审计通过；真实抖音账号移除与 WorkManager 实际执行保持未完成）；此前阶段序列执行至T15，2026-11-23 完成 P0 基线回归；T06至T14的完整验收仍有未完成范围。每项结果对应当次账号、设备、输入、源码和安装包。
 
 ## 2026-11-25 S1 抖音物流自动导入闭环
 
@@ -103,6 +103,24 @@
 
 提交与 CI：commit c9e33a2 推送 main，Android CI 通过（run 45801666241）。
 
+## 2026-11-27 S6 数据保留、后台调度与账号移除
+
+固定流程：应用启动并完成前台自动更新 → 设置页开启“每30分钟后台更新” → 移除京东主账号（确认对话框再次点击“移除账号”）→ 包裹页按已移除账号筛选 → 详情页核对来源按钮 → 关闭后台更新。手机界面操作由 Pinky 完成；构建、安装、instrument、数据库副本与 dumpsys 使用 adb。
+
+结果（设备 95f79212，应用 1.1.0、versionCode 2，主 APK SHA-256 1be796a8…，测试 APK SHA-256 551c59cf…）：
+
+- 账号：京东主账号由 READY 变为 REMOVED，enabled=0、deleted=1；其他账号与其余字段保持。
+- 清理：encrypted_credentials 的凭据键由 6 个变为 4 个，目标账号的 `jd.login` 与 `captures` 消失；app_webview 的 Profile 目录由 3 个变为 2 个；移除时 profile 未在当前进程加载，删除立即完成，`pending_deletions` 为空；`files/native-sync-progress` 只有抖音进度文件，目标账号没有进度文件。
+- 业务数据：orders 27、Shipment 26、SourceRef 27、TrackingEvent 90、ShipmentAlias 1、TrackingQueue 0、PendingProfileCleanup 0 全部保持；详情页来源按钮显示“来源账号已经移除”且不可用。
+- 调度：关闭时 0 个本应用 `AccountSyncWorker` 任务；开启后 3 个，每项 `EXTRA_IS_PERIODIC=true`、`Minimum latency +29m59s991ms`、`Required constraints TIMING_DELAY CONNECTIVITY FLEXIBILITY`；移除京东后 2 个；关闭后 0 个。
+- 副本审计：before 与 after-remove、after-start 的八张业务表逐字段比较，除目标账号的 enabled/deleted/state、目标账号查询项与凭据键、profile 目录数量外没有差异；`integrity_check` ok、`user_version` 2。
+- 共享来源清理：独立副本上两笔真实淘宝订单形成的共享包裹（2 个来源、1 条别名）设置备注与归档后排除第二笔订单，保留包裹、另一来源、备注、归档、别名与 13 条轨迹；单来源京东包裹连同 25 条轨迹删除；Shipment 26→25、orders 27→25、SourceRef 27→25，孤立查询项与别名为 0。
+- 移除审计：S6RemovalAuditTest 将生产库与移除前副本逐表比较，queueRowsForAccount 0、credentialKeysForAccount 0、pendingProfiles 0、profileDeleted true；原生进度删除测试用真实进度文件副本验证主文件与备份删除、生产文件保持。
+- 证据：work/evidence/platform-logistics-v2/S6/20261127-0930/（before、after-remove、after-start、scheduling、instrument、dryrun）；Pinky 记录 work/evidence/pinky/S6/20261127-0930/（observations.md、report/）；日志 work/logs/platform-logistics-v2/S6-*.log。
+- 验证：四项 Gradle 命令通过（最终 33 秒，83 项任务，3 项执行、80 项保持）；主机测试 42 项、12 跳过、0 失败；Lint 0 errors、75 warnings、2 hints；设备测试 S6SharedSourceCleanupTest 1 项、S6RemovalAuditTest 2 项通过；Pinky 任务与 instrument 串行执行。
+
+未完成范围：真实抖音账号移除（原生进度删除由真实文件副本覆盖）；按账号删除 `native-entry-evidence` 目录；WorkManager 实际执行结果；京东账号重新登录；更新进行中移除账号；新的平台第二次导入；历史非空备注与归档样本；已加载 profile 的延迟删除分支（本次为未加载分支，删除立即完成）。
+
 ## 已验证的阶段范围
 
 | 阶段 | 已取得的真实依据 | 保留的条件 |
@@ -160,12 +178,12 @@ T15四项Gradle检查通过，2分20秒，1项执行82项保持；主机测试�
 ## 继续未完成的范围
 
 - 京东待发货与待收货现场样本、302 与安全验证现场样本、原生 App 订单计数对照、多包裹与跨年物流；淘宝部分类型及完整平台范围；早期跨阶段字段变化的独立响应依据。
-- 真实共享来源、别名、非空历史备注和归档迁移，以及缺少被删除平台来源的清理分支。
+- 历史非空备注与归档样本、缺少被删除平台来源的清理分支；真实抖音账号移除、按账号清理 `native-entry-evidence` 目录、WorkManager 实际执行结果与已加载 profile 的延迟删除分支。
 - 在途、跨年、多包裹、新订单、账号不匹配、登录及安全验证的部分原生场景。
 - 抖音完整列表结束、两笔候选必要字段、完整物流历史到底及无障碍自动重连。
 - 拼多多平台结束标志、待分享标签、两条订单的状态提示文本、原生 App 页面对照及单设备登录策略。
 - 真实取件码复制、未关联抖音订单卡片、外部平台导航及MainActivity启动与自动同步的完整联合流程。
-- 进度密文损坏、版本不兼容、WorkManager实际系统调度及部分账号移除场景。
+- 进度密文损坏、版本不兼容及更新进行中移除账号的并发场景。
 - 跨暂停无障碍启用列表变化归因、Jev整体速度和人工介入改善。
 
 完整验收保持未完成。阶段结束表示本次已完成指定执行、记录和交付，缺少证据的项目继续保留。

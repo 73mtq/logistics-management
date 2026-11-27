@@ -51,5 +51,6 @@ Pinky 是桌面端的 MCP 手机操作网关。本项目开发期的手机界面
 
 - 小米「USB 调试（安全设置）」无法打开：停止 Pinky 接入并报告，不使用 adb shell input 替代手机操作。
 - MCP 调用超时或 gateway 未运行：打开或重启 Pinky 桌面应用，再重启 DSH；仍失败时停止设备执行并报告。
+- 用户主动退出 Pinky 后，转发进程不会自动启动桌面应用；打开桌面应用后自动重连，不需要重启 DSH。桌面应用未运行时的离线应答在新版 MCP 协议下可能表现为 `missing required resultType`，打开 Pinky 后恢复。
 - 读屏缺少所需属性：记录限制，使用应用内捕获、数据库副本与任务报告作为证据；不使用 `uiautomator dump` 驱动页面操作。
 - 需要验证码、密码或系统设置变更：使用 phone_handoff，由用户在手机完成。

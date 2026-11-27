@@ -1,16 +1,16 @@
 # 开发计划与恢复入口
 
-更新日期：2026-11-26，Asia/Shanghai。
+更新日期：2026-11-27，Asia/Shanghai。
 
-状态：S1 完成（首页直达订单列表、卡片“更多”与弹窗“查看物流”、目标订单五条轨迹、两轮不重复）；S2 完成已导入订单物流读取（两轮 42.058 秒与 45.085 秒、3 笔订单与 15 条轨迹稳定），列表结束标志、全部标签选中状态与未导入订单直接物流保持未完成；S3 完成淘宝短信会话恢复与订单物流读取（两轮 3 笔订单、2 个包裹与 26 条轨迹，重复执行不新增），原生页面读取保留为未启用；S4 完成拼多多短信会话恢复与两轮订单物流读取（20 笔订单、20 个来源、24 条轨迹，查询队列 0；分页 type/page 与标签条数核对通过），平台结束标志、待分享标签与原生 App 页面对照保持未完成；S5 完成京东短信会话恢复与订单页迁移适配（订单页迁移到 o.m.jd.com 与 newUserAllOrderList，单次读取 50 笔去重、36 笔排除、1 笔 90 天内订单写入生产库，物流 25 条轨迹，两轮 21.079 秒与 19.268 秒稳定，清除会话后 NEEDS_LOGIN 与重新登录 READY 均通过），原生订单页计数、待发货与 302／安全验证样本保持未完成。P0 至 P2 完成；P3 与 P4 完成可离线部分；P5、P6 部分现场验证；P7 完成本机签名 release 构建与安装（版本 1.1.0、versionCode 2、Room schema v2）。逐项结果见[验收记录](acceptance.md)，审查依据见[项目审查报告](project-review-2026-11-23.md)。
+状态：S1 完成（首页直达订单列表、卡片“更多”与弹窗“查看物流”、目标订单五条轨迹、两轮不重复）；S2 完成已导入订单物流读取（两轮 42.058 秒与 45.085 秒、3 笔订单与 15 条轨迹稳定），列表结束标志、全部标签选中状态与未导入订单直接物流保持未完成；S3 完成淘宝短信会话恢复与订单物流读取（两轮 3 笔订单、2 个包裹与 26 条轨迹，重复执行不新增），原生页面读取保留为未启用；S4 完成拼多多短信会话恢复与两轮订单物流读取（20 笔订单、20 个来源、24 条轨迹，查询队列 0；分页 type/page 与标签条数核对通过），平台结束标志、待分享标签与原生 App 页面对照保持未完成；S5 完成京东短信会话恢复与订单页迁移适配（订单页迁移到 o.m.jd.com 与 newUserAllOrderList，单次读取 50 笔去重、36 笔排除、1 笔 90 天内订单写入生产库，物流 25 条轨迹，两轮 21.079 秒与 19.268 秒稳定，清除会话后 NEEDS_LOGIN 与重新登录 READY 均通过），原生订单页计数、待发货与 302／安全验证样本保持未完成；S6 完成数据保留、后台调度与账号移除（京东主账号移除、凭据 6→4、profile 3→2、业务表保持、后台任务 0→3→2→0、共享来源副本清理与移除审计通过），真实抖音账号移除、按账号证据目录与 WorkManager 实际执行保持未完成。P0 至 P2 完成；P3 与 P4 完成可离线部分；P5、P6 部分现场验证；P7 完成本机签名 release 构建与安装（版本 1.1.0、versionCode 2、Room schema v2）。逐项结果见[验收记录](acceptance.md)，审查依据见[项目审查报告](project-review-2026-11-23.md)。
 
 ## 当前设备与仓库状态
 
 - 设备 95f79212（24129PN74C，Android 17 / API 37），adb 在线。
-- 应用 com.logisticsmanagement.app 1.1.0、versionCode 2，本机调试签名，可 run-as；应用数据含抖音 3 笔、淘宝 3 笔、拼多多 20 笔与京东 1 笔订单，京东来源 1 个、轨迹 25 条、查询队列 0；拼多多来源 20 个、轨迹 24 条（2026-11-26 18:14 验证）。
+- 应用 com.logisticsmanagement.app 1.1.0、versionCode 2，本机调试签名，可 run-as；生产库 orders 27、Shipment 26、SourceRef 27、TrackingEvent 90、ShipmentAlias 1、TrackingQueue 0、PendingProfileCleanup 0；京东主账号已于 2026-11-27 移除，京东订单、包裹与 25 条轨迹保留，账号本身需要重新登录后才能恢复更新（2026-11-27 09:35 验证）。
 - 设备已安装平台应用：抖音 com.ss.android.ugc.aweme、淘宝 com.taobao.taobao、拼多多 com.xunmeng.pinduoduo、京东 com.jingdong.app.mall（16.2.0）与闲鱼 com.taobao.idlefish。
 - 无障碍启用列表包含 hello.litiaotiao.app/.LttService 与 app.pinky.companion/.PinkyAccessibilityService；抖音采集服务当前未启用。
-- 仓库包含 2026-11-26 的 S5 改动与验收记录。
+- 仓库包含 2026-11-27 的 S6 改动与验收记录；Pinky 任务报告保存在本机 work/evidence/pinky/S6/20261127-0930/。
 
 ## 执行原则
 
@@ -142,6 +142,8 @@ S3 至 S5 共用一套原生页面读取能力，顺序按设备上已登录的�
 **输入**：至少一条真实订单与来源、共享来源样本、别名样本、原生进度文件、WorkManager 登记。
 
 **目标**：补齐迁移与清理、系统调度与账号移除的证据。
+
+**2026-11-27 状态**：Pinky 完成设置页后台更新开关、京东主账号移除与包裹页来源核对；`dumpsys jobscheduler` 记录 0→3→2→0 个 `AccountSyncWorker` 任务，每项 `EXTRA_IS_PERIODIC=true`、`Minimum latency +29m59s991ms`、`Required constraints TIMING_DELAY CONNECTIVITY FLEXIBILITY`。移除前基线、移除后与启动后的八张业务表逐字段比较通过；目标账号 enabled=0、deleted=1、state=REMOVED，凭据键 6→4，profile 目录 3→2，orders 27、Shipment 26、SourceRef 27、TrackingEvent 90、ShipmentAlias 1、TrackingQueue 0 保持。共享来源清理测试在独立副本上删除共享包裹的第二笔来源并保留包裹、另一来源、备注、归档与别名，单来源京东包裹连同 25 条轨迹删除。真实抖音账号移除、按账号清理 `native-entry-evidence` 目录、WorkManager 实际执行、京东重新登录与已加载 profile 的延迟删除分支保持未完成。
 
 **工作**：
 

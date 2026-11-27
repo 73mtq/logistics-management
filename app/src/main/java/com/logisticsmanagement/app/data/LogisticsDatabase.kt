@@ -74,6 +74,7 @@ interface LogisticsDao {
     @Query("UPDATE TrackingQueue SET lastAttemptAt = :time, error = :error WHERE sourceId = :id") suspend fun recordTrackingAttempt(id: String, time: Long, error: String?)
     @Query("DELETE FROM TrackingQueue WHERE sourceId = :id") suspend fun finishTracking(id: String)
     @Query("DELETE FROM TrackingQueue WHERE sourceId NOT IN (SELECT id FROM SourceRef)") suspend fun deleteOrphanTracking()
+    @Query("DELETE FROM TrackingQueue WHERE accountId = :id") suspend fun deleteAccountQueue(id: String)
 }
 
 @Database(entities = [Account::class, Order::class, Shipment::class, SourceRef::class, TrackingEvent::class, ShipmentAlias::class, PendingProfileCleanup::class, TrackingQueue::class], version = 2, exportSchema = true)

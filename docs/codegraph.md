@@ -27,21 +27,21 @@ codegraph sync .
 
 ## 本次索引记录
 
-2026-11-23 执行 `codegraph sync` 与 `codegraph status`，解析完成，未报告文件解析失败：
+2026-11-27 执行 `codegraph sync` 与 `codegraph status`，解析完成，未报告文件解析失败：
 
 | 项目 | 数量 |
 | --- | --- |
-| 索引文件 | 229 |
-| 节点 | 4,098 |
-| 关系 | 11,128 |
-| kotlin | 121 |
+| 索引文件 | 257 |
+| 节点 | 4,785 |
+| 关系 | 13,193 |
+| kotlin | 147 |
 | xml | 95 |
 | java | 6 |
 | properties | 4 |
-| python | 1 |
+| python | 3 |
 | yaml | 2 |
 
-索引包含构建生成源码，kotlin 数量高于源码 71 份（main 42、单元测试 5、设备测试 24）。节点包含文件、import、namespace、class、interface、function、method、enum 等类型；关系包含调用、引用、实现与其他静态源码关系。索引数量描述当次源码，源码变更后以 `codegraph status` 为准。Android 生命周期、Room 生成代码及平台网页行为需要结合源码与[验收记录](acceptance.md)阅读。
+索引包含构建生成源码，kotlin 数量高于源码 97 份（main 50、单元测试 11、设备测试 36）。节点包含文件、import、namespace、class、interface、function、method、enum 等类型；关系包含调用、引用、实现与其他静态源码关系。索引数量描述当次源码，源码变更后以 `codegraph status` 为准。Android 生命周期、Room 生成代码及平台网页行为需要结合源码与[验收记录](acceptance.md)阅读。
 
 ## 查询项目
 
@@ -62,4 +62,4 @@ codegraph sync .
 codegraph node app/src/main/java/com/logisticsmanagement/app/sync/SyncCoordinator.kt --offset 81 --limit 51
 ```
 
-本次已执行 `status`、`explore`、`node` 和 `callers syncAccount`，确认能够取得真实源码及调用关系。这些检查验证文档的查询入口，应用业务验收范围仍以 `acceptance.md` 为准。
+本次已执行 `codegraph sync` 与 `status`；此前已核查 `explore`、`node` 和 `callers syncAccount` 的查询入口，应用业务验收范围仍以 `acceptance.md` 为准。

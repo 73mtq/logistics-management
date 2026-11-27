@@ -209,6 +209,7 @@ class LogisticsRepository(val database: LogisticsDatabase) {
     }
     suspend fun finishTracking(id: String) = dao.finishTracking(id)
     suspend fun pendingTracking(accountId: String) = dao.trackingQueue(accountId)
+    suspend fun clearAccountQueue(id: String) = dao.deleteAccountQueue(id)
     private suspend fun combineShipments(previous: Shipment, target: Shipment): Shipment {
         val previousEvents = dao.events(previous.id).map { TrackingEventData(it.time, it.text, it.status) }
         val targetEvents = dao.events(target.id).map { TrackingEventData(it.time, it.text, it.status) }

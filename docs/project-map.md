@@ -2,7 +2,7 @@
 
 产品与构建入口见[README](../README.md)，数据规则见[架构说明](architecture.md)，当前真实范围见[验收记录](acceptance.md)。本机有 `.codegraph/` 时，理解或定位代码优先使用[CodeGraph](codegraph.md)。
 
-2026-11-23 完成 P0 基线回归；后续按[开发计划与恢复入口](development-plan.md)的 P1 至 P7 执行。当前版本 1.1.0、versionCode 2、Room schema v2；Kotlin 源码 71 份（main 42、单元测试 5、设备测试 24）。
+2026-11-27 完成 S6 数据保留、后台调度与账号移除；后续按[开发计划与恢复入口](development-plan.md)的 S7 执行。当前版本 1.1.0、versionCode 2、Room schema v2；Kotlin 源码 97 份（main 50、单元测试 11、设备测试 36）。
 
 ## 启动与页面
 
@@ -109,5 +109,6 @@ erDiagram
 | 执行及后台 | [SyncCoordinator.kt](../app/src/main/java/com/logisticsmanagement/app/sync/SyncCoordinator.kt)、[SyncProgress.kt](../app/src/main/java/com/logisticsmanagement/app/sync/SyncProgress.kt)、[Workers.kt](../app/src/main/java/com/logisticsmanagement/app/sync/Workers.kt) |
 | 加密及配置 | [CredentialStore.kt](../app/src/main/java/com/logisticsmanagement/app/data/CredentialStore.kt)、[SettingsStore.kt](../app/src/main/java/com/logisticsmanagement/app/data/SettingsStore.kt) |
 | 真实验证源码 | [androidTest](../app/src/androidTest/java/com/logisticsmanagement/app)、[单元测试](../app/src/test/java/com/logisticsmanagement/app) |
+| 数据保留与移除验收 | [S6RemovalAuditTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S6RemovalAuditTest.kt)、[S6SharedSourceCleanupTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S6SharedSourceCleanupTest.kt)、[s6_audit.py](../scripts/device/s6_audit.py) |
 
 修改源码后执行 `codegraph sync`，平台可用范围更新需要真实证据及验收记录。完整本机阶段资料通过任务状态和证据索引查找。

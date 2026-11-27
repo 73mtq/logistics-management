@@ -335,6 +335,7 @@ class SyncCoordinator(
         activeJobs[id]?.cancel()
         WorkManager.getInstance(context).cancelUniqueWork("account_$id")
         locks.computeIfAbsent(id) { Mutex() }.withLock {
+            repository.clearAccountQueue(id)
             platforms.deleteAccountProfile(account)
             credentials.deleteAccount(id)
             nativeProgressStore.delete(id)
