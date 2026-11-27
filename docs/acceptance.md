@@ -183,6 +183,7 @@ Pinky 现场结果（任务报告与录像保存在本机）：
 - 最终状态：Account 8 行（活动 3：拼多多、抖音、淘宝；已移除 5，其中包含临时京东账号）、orders 27、Shipment 26、SourceRef 27、TrackingEvent 90、TrackingQueue 0、PendingProfileCleanup 0；pending_deletions 为空，profile 目录 Profile 2 与 Profile 4，原生进度 1 个，抖音证据目录 3 个。
 - 证据：work/evidence/platform-logistics-v2/S8/20261127-1500/（before-install、before-removal、after-removal、after-start、after-force、after-periodic、final、final2、native-evidence、background、workmanager）；Pinky 记录 work/evidence/pinky/S8/20261127-1500/。
 - 验证：四项 Gradle 命令；S8NativeEvidenceCleanupTest 1 项通过；S8ProfileCleanupTest 2 项通过；S8BackgroundExecutionTest 1 项通过；s8_audit.py compare 返回 ok=true；Pinky 与仪器测试串行执行。
+- 提交与 CI：commit 9c00c32 推送 main，Android CI 通过（run 45959783473，3 分 30 秒）。
 
 ## 已验证的阶段范围
 
