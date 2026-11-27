@@ -60,6 +60,7 @@ class DouyinCaptureActivity : ComponentActivity() {
         fun start(resume: Boolean) { lifecycleScope.launch {
             try {
                 val selected = account?.id?.let { container.repository.getAccount(it) } ?: throw AppFailure("账号尚未读取", FailureKind.CONFIGURATION)
+                if (selected.deleted || !selected.enabled) throw AppFailure("抖音账号已移除或已停用", FailureKind.CONFIGURATION)
                 val intent = packageManager.getLaunchIntentForPackage(DouyinCaptureController.PACKAGE)
                     ?: throw AppFailure("请安装抖音官方 App", FailureKind.CONFIGURATION)
                 require(selected.captureMode == CaptureMode.APP_PAGE)

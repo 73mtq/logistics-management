@@ -24,6 +24,7 @@ class LogisticsRepository(val database: LogisticsDatabase) {
     fun observeNativeUnlinkedOrders() = dao.observeNativeUnlinkedOrders()
     suspend fun getAccount(id: String) = dao.account(id)
     suspend fun getAccounts() = dao.accounts()
+    suspend fun getAllAccounts() = dao.allAccounts()
     suspend fun normalizeDouyinCaptureModes() = dao.normalizeDouyinCaptureModes()
     suspend fun getShipment(id: String) = database.withTransaction { dao.shipment(id) ?: dao.alias(id)?.let { dao.shipment(it) } }
     suspend fun getShipments() = dao.shipments()

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.webkit.WebViewFeature
 import com.logisticsmanagement.app.data.CredentialStore
 import com.logisticsmanagement.app.data.LogisticsRepository
 import com.logisticsmanagement.app.model.Account
@@ -40,6 +41,10 @@ class PlatformRegistry(
     }
 
     fun prepareProfiles() = profiles.prepare()
+
+    fun profilesSupported(): Boolean =
+        WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE) &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)
     suspend fun cleanupRemovedProfiles() {
         for (pending in repository.pendingProfileCleanup()) {
             profiles.deleteProfile(pending.profileName)

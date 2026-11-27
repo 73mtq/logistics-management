@@ -29,6 +29,7 @@ class LogisticsApplication : Application() {
             NativeEvidenceStore.cleanup(filesDir)
             recoverNativeProgress()
             container.platforms.cleanupRemovedProfiles()
+            container.syncCoordinator.cleanupRemovedAccounts()
             container.syncCoordinator.updateSchedules()
             container.ready.complete(Unit)
         }

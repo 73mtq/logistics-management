@@ -24,6 +24,7 @@ interface LogisticsDao {
     @Query("SELECT * FROM Account ORDER BY platform, label") fun observeAllAccounts(): Flow<List<Account>>
     @Query("SELECT * FROM Account WHERE id = :id") suspend fun account(id: String): Account?
     @Query("SELECT * FROM Account WHERE deleted = 0") suspend fun accounts(): List<Account>
+    @Query("SELECT * FROM Account") suspend fun allAccounts(): List<Account>
     @Upsert suspend fun putAccount(account: Account)
     @Query("UPDATE Account SET state = :state, error = :error, lastSyncedAt = COALESCE(:lastSyncedAt, lastSyncedAt) WHERE id = :id AND deleted = 0")
     suspend fun setSyncState(id: String, state: AccountState, error: String?, lastSyncedAt: Long?): Int

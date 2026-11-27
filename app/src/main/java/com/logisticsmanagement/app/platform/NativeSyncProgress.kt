@@ -71,12 +71,18 @@ internal object NativeEvidenceStore {
         }
     }
 
+    fun writeEnd(directory: File?, body: String, credentials: CredentialStore): Boolean {
+        if (directory == null || !directory.isDirectory) return false
+        File(directory, "end.enc").writeText(credentials.encrypt(body))
+        return true
+    }
+
     fun deleteAccount(filesDir: File, accountId: String, credentials: CredentialStore): Int {
         val dirs = File(filesDir, "native-entry-evidence").listFiles()?.filter { it.isDirectory } ?: return 0
         var deleted = 0
         for (dir in dirs) {
             if (evidenceOwner(dir, credentials) != accountId) continue
-            check(dir.deleteRecursively()) { "无法删除账号采集证据：${dir.name}" }
+            if (!dir.deleteRecursively()) throw AppFailure("无法删除账号采集证据：${dir.name}", FailureKind.CONFIGURATION)
             deleted++
         }
         return deleted

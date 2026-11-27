@@ -75,6 +75,26 @@ flowchart TD
 
 固定流程进入首页、商城、我的订单及全部，逐项核查真实订单编号。原生订单与物流分别提交；继续采集重新核查账号和页面。Jev 判断用途，程序检查控制实际动作。完整分页、部分样本及服务自动重连的未完成范围继续保留。
 
+## 账号移除
+
+```mermaid
+sequenceDiagram
+    participant UI as 设置页
+    participant Sync as SyncCoordinator
+    participant Capture as DouyinCaptureController
+    participant Evidence as NativeEvidenceStore
+    participant Profiles as AccountProfiles
+    UI->>Sync: removeAccount
+    Sync->>Sync: 标记 deleted 并取消任务
+    Sync->>Capture: stopForRemoval 并等待采集空闲
+    Sync->>Sync: 取账号锁
+    Sync->>Evidence: 删除可归属证据目录
+    Sync->>Profiles: 删除 profile 或记入待删除
+    Sync->>Sync: 删除凭据与原生进度
+```
+
+账号移除先停止该账号的抖音采集并等待结束，再清理查询项、证据、profile、凭据与原生进度。`writeEnd` 在证据目录不存在时跳过写入；`cleanupRemovedAccounts` 在每次启动对全部已删除账号执行同一组幂等清理；`AccountProfiles.deleteProfile` 在 profile 未创建时跳过删除。节点遍历每 25 个节点让步一次，避免主线程长时间占用。
+
 ## 数据关系
 
 ```mermaid
@@ -111,5 +131,7 @@ erDiagram
 | 真实验证源码 | [androidTest](../app/src/androidTest/java/com/logisticsmanagement/app)、[单元测试](../app/src/test/java/com/logisticsmanagement/app) |
 | 数据保留与移除验收 | [S6RemovalAuditTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S6RemovalAuditTest.kt)、[S6SharedSourceCleanupTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S6SharedSourceCleanupTest.kt)、[s6_audit.py](../scripts/device/s6_audit.py) |
 | S8 账号清理与后台任务 | [S8NativeEvidenceCleanupTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S8NativeEvidenceCleanupTest.kt)、[S8ProfileCleanupTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S8ProfileCleanupTest.kt)、[S8BackgroundExecutionTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S8BackgroundExecutionTest.kt)、[s8_audit.py](../scripts/device/s8_audit.py) |
+| 账号移除与启动清理 | [SyncCoordinator.kt](../app/src/main/java/com/logisticsmanagement/app/sync/SyncCoordinator.kt)、[NativeSyncProgress.kt](../app/src/main/java/com/logisticsmanagement/app/platform/NativeSyncProgress.kt)、[LogisticsApplication.kt](../app/src/main/java/com/logisticsmanagement/app/LogisticsApplication.kt) |
+| S9 移除并发与重新绑定 | [S9EndWriteGuardTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S9EndWriteGuardTest.kt)、[S9CleanupConvergenceTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S9CleanupConvergenceTest.kt)、[S9RemovalAuditTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S9RemovalAuditTest.kt)、[s9_audit.py](../scripts/device/s9_audit.py) |
 
 修改源码后执行 `codegraph sync`，平台可用范围更新需要真实证据及验收记录。完整本机阶段资料通过任务状态和证据索引查找。

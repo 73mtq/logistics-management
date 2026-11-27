@@ -9,6 +9,7 @@ import com.logisticsmanagement.app.model.*
 import com.logisticsmanagement.app.platform.PlatformRegistry
 import com.logisticsmanagement.app.platform.PlatformAdapter
 import com.logisticsmanagement.app.platform.BrowserAdapter
+import com.logisticsmanagement.app.platform.DouyinCaptureController
 import com.logisticsmanagement.app.platform.PddAdapter
 import com.logisticsmanagement.app.platform.TaobaoAdapter
 import com.logisticsmanagement.app.platform.NativeEvidenceStore
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -160,7 +162,7 @@ class SyncCoordinator(
             try {
                 withContext(NonCancellable) {
                     repository.recordSyncAttempt(id)
-                    check(repository.setSyncState(id, AccountState.SYNCING) == 1)
+                    if (repository.setSyncState(id, AccountState.SYNCING) != 1) throw AppFailure("账号已移除", FailureKind.CONFIGURATION)
                 }
                 report(SyncProgress(id, SyncStage.IMPORTING, message = "正在读取订单", pending = resumedIds.size))
                 val completed = withTimeoutOrNull(timeoutMillis) {
@@ -335,6 +337,10 @@ class SyncCoordinator(
         repository.saveAccount(account.copy(enabled = false, deleted = true, state = AccountState.REMOVED))
         activeJobs[id]?.cancel()
         WorkManager.getInstance(context).cancelUniqueWork("account_$id")
+        withContext(Dispatchers.Main.immediate) {
+            DouyinCaptureController.stopForRemoval(id)
+            DouyinCaptureController.awaitIdle()
+        }
         locks.computeIfAbsent(id) { Mutex() }.withLock {
             repository.clearAccountQueue(id)
             withContext(Dispatchers.IO) { NativeEvidenceStore.deleteAccount(context.filesDir, id, credentials) }
@@ -342,6 +348,17 @@ class SyncCoordinator(
             credentials.deleteAccount(id)
             nativeProgressStore.delete(id)
         }
+    }
+
+    internal suspend fun cleanupRemovedAccounts(filesRoot: File = context.filesDir) {
+        for (account in repository.getAllAccounts().filter { it.deleted }) cleanupRemovedAccount(account, filesRoot)
+    }
+
+    internal suspend fun cleanupRemovedAccount(account: Account, filesRoot: File = context.filesDir) {
+        withContext(Dispatchers.IO) { NativeEvidenceStore.deleteAccount(filesRoot, account.id, credentials) }
+        if (account.profileName.startsWith("account_") && platforms.profilesSupported()) platforms.deleteAccountProfile(account)
+        credentials.deleteAccount(account.id)
+        nativeProgressStore.delete(account.id)
     }
 
     suspend fun updateSchedules() {

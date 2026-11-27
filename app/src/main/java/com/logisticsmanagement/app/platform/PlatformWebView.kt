@@ -108,7 +108,7 @@ internal class AccountProfiles(context: Context) {
                 }
             }
         } else {
-            ProfileStore.getInstance().deleteProfile(name)
+            if (ProfileStore.getInstance().getProfile(name) != null) ProfileStore.getInstance().deleteProfile(name)
             pending.remove(name)
             check(preferences.edit().putStringSet("pending_deletions", pending).commit())
         }

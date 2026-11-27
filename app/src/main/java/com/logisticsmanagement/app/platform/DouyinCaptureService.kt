@@ -146,7 +146,8 @@ internal object DouyinCaptureController {
     internal fun startWithEvidence(account: Account, captureId: String, timeoutMillis: Long = 8 * 60_000L, importOrders: Boolean = false,
         pagination: Boolean = false, resume: Boolean = false, focusOrderId: String? = null) {
         val connected = service ?: throw AppFailure("请开启抖音订单采集的无障碍权限", FailureKind.CONFIGURATION)
-        require(account.platform == Platform.DOUYIN && account.enabled && !account.deleted)
+        if (account.platform != Platform.DOUYIN || !account.enabled || account.deleted)
+            throw AppFailure("当前抖音账号已移除或已停用", FailureKind.CONFIGURATION)
         require(captureId.matches(Regex("[A-Za-z0-9-]+")) && timeoutMillis > 0)
         if (this.account != null) throw AppFailure("当前采集正在进行，请先结束当前采集", FailureKind.CONFIGURATION)
         connected.prepareEvidence(account, captureId)
@@ -196,6 +197,17 @@ internal object DouyinCaptureController {
         account = null
         navigationMode = false
         mutableStatus.value = message
+    }
+
+    internal fun stopForRemoval(accountId: String) {
+        if (account?.id != accountId) return
+        stop("采集账号已移除")
+    }
+
+    internal suspend fun awaitIdle(timeoutMillis: Long = 10_000) {
+        val connected = service ?: return
+        val completed = withTimeoutOrNull(timeoutMillis) { connected.awaitIdle(); true }
+        if (completed != true) throw AppFailure("抖音采集尚未停止，请稍后再移除账号", FailureKind.CONFIGURATION)
     }
 
     fun report(message: String) { mutableStatus.value = message }
@@ -305,6 +317,14 @@ class DouyinCaptureService : AccessibilityService() {
     }
 
     internal suspend fun awaitOrdersFinished() { orderJob?.join(); navigationJob?.join(); eventWriter?.join() }
+
+    internal suspend fun awaitIdle() {
+        captureJob?.join()
+        eventCaptureJob?.join()
+        orderJob?.join()
+        navigationJob?.join()
+        eventWriter?.join()
+    }
     internal suspend fun paginationEvidence(value: JsonElement) {
         if (!diagnosticsEnabled()) return
         val name = "pagination-${navigationSequence++.toString().padStart(6, '0')}.enc"
@@ -380,6 +400,7 @@ class DouyinCaptureService : AccessibilityService() {
     internal fun recordEnd(message: String) {
         val account = evidenceAccount ?: return
         val target = directory ?: return
+        if (!target.isDirectory) return
         val container = (application as LogisticsApplication).container
         val files = target.walkTopDown().filter { it.isFile }.toList()
         val body = buildJsonObject {
@@ -395,7 +416,7 @@ class DouyinCaptureService : AccessibilityService() {
             put("serviceConnected", DouyinCaptureController.service === this@DouyinCaptureService)
             put("touchExplorationRequested", serviceInfo.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0)
         }.toString()
-        File(target, "end.enc").writeText(container.credentials.encrypt(body))
+        if (!NativeEvidenceStore.writeEnd(target, body, container.credentials)) return
         cleanupEvidence()
     }
 
@@ -658,8 +679,10 @@ class DouyinCaptureService : AccessibilityService() {
         else if (activeRoot.packageName?.toString() != DouyinCaptureController.PACKAGE) reasons.add("活动窗口包名不匹配")
         else roots[activeRoot.windowId] = activeRoot
         for ((windowId, root) in roots) {
+            delay(1)
             val nodes = mutableListOf<NativeNode>()
-            fun visit(node: AccessibilityNodeInfo, path: List<Int>) {
+            suspend fun visit(node: AccessibilityNodeInfo, path: List<Int>) {
+                if (nodes.size % 25 == 24) delay(1)
                 if (refreshPath != null && (path.isEmpty() || path.take(refreshPath.size) == refreshPath)) {
                     val refreshed = node.refresh()
                     refreshResults.add(NativeRefreshResult(windowId, path, refreshed))
