@@ -161,6 +161,8 @@ Pinky 现场结果（任务报告与录像保存在本机）：
 
 验证：四项 Gradle 命令；真实设备页面测试（Pinky）；apksigner 与 aapt2 校验；覆盖安装；SHA-256；git 状态。
 
+提交与 CI：commit 83417b5 推送 main，Android CI 通过（run 45929726302，2 分 59 秒）。发布页 v1.2.0-dev.20261127 提供 app-release.apk（58788698 字节，发布页 digest 与本地 SHA-256 一致）、SHA256SUMS.txt 与 SIGNATURE.txt。
+
 ## 已验证的阶段范围
 
 | 阶段 | 已取得的真实依据 | 保留的条件 |
