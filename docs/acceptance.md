@@ -202,7 +202,7 @@ Pinky 现场结果（任务报告与录像保存在本机）：
 - 设备测试：S9EndWriteGuardTest 1 项、S9CleanupConvergenceTest 1 项、S9RemovalAuditTest 2 项通过；审计 compare 与最终快照一致（业务表 30/26/30/90/0/4/0）。
 - 环境：覆盖安装会移除应用的无障碍启用项，安装后需要重新写入 enabled_accessibility_services；阶段结束时已恢复为 hello.litiaotiao.app/.LttService:app.pinky.companion/.PinkyAccessibilityService。
 - 证据：work/evidence/platform-logistics-v2/S9/20261127-1615/（before、after-install、after-tests、douyin-after-removal、douyin-after-start、douyin-after-rebind、taobao-before、taobao-after-removal、taobao-after-start、taobao2-before、taobao2-after-removal、taobao2-after-start、final、audit、device-evidence）；Pinky 记录 work/evidence/pinky/S9/20261127-1615/（淘宝阶段报告与 observations.md）。
-- 提交与 CI：待补充。
+- 提交与 CI：commit e5ad9f2 推送 main，Android CI 通过（run 45973267452，3 分 41 秒）。
 
 未完成范围：取消进行中网页同步的直接证据（两次淘宝移除以界面“正在更新”为起点，实际删除时同步已完成）；临时淘宝账号使用本机号码登录，淘宝侧可能新建账号，需要用户自行确认；取件码复制、未关联抖音订单卡片与待发货订单卡片缺少真实样本；京东与拼多多重新登录；京东原生订单计数与安全验证样本；后台更新进行中移除；抖音完整列表结束与全部标签选中状态。
 
