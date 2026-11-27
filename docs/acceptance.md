@@ -224,6 +224,7 @@ Pinky 现场结果（任务报告与录像保存在本机）：
 - 设备测试：S10RebindAttributionTest 1 项通过；S10SessionRestoreTest 第一次运行 1 项失败（目标包裹取到新订单的独立包裹），修正断言后 2 项通过；S10ProfileDeferTest 1 项通过。
 - 收尾：pending_deletions 为空，profile 为 Profile 2、Profile 4 与 Profile 11；测试创建的 Profile 12 在测试进程内无法删除，按测试残留手动清理。
 - 环境：覆盖安装后无障碍启用列表保持 hello.litiaotiao.app/.LttService:app.pinky.companion/.PinkyAccessibilityService。
+- 提交与 CI：commit 26d6126 推送 main，Android CI 通过（run 45998401796，2 分 55 秒）。
 - 证据：work/evidence/platform-logistics-v2/S10/20261127-1930/（before、jd、pdd、after、apk-sha256、accessibility、logcat 等）；日志 work/logs/platform-logistics-v2/S10-20261127-1930-*.log；Pinky 任务以 logcat、快照与页面文本为证据，未导出任务报告。
 
 未完成范围：取消进行中网页同步的直接证据、后台更新进行中移除、京东待发货与 302 样本、取件码与待发货订单卡片样本、抖音完整列表结束；拼多多待分享标签与平台结束标志由平台决定，保持 PARTIAL。
