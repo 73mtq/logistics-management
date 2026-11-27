@@ -2,7 +2,7 @@
 
 产品与构建入口见[README](../README.md)，数据规则见[架构说明](architecture.md)，当前真实范围见[验收记录](acceptance.md)。本机有 `.codegraph/` 时，理解或定位代码优先使用[CodeGraph](codegraph.md)。
 
-2026-11-27 完成 S8 账号清理与后台任务执行；当前版本 1.2.0、versionCode 3、Room schema v2；Kotlin 源码 101 份（main 50、单元测试 11、设备测试 40）。
+2026-11-27 完成 S10 会话恢复与重新绑定归属规则；当前版本 1.2.0、versionCode 3、Room schema v2；Kotlin 源码 109 份（main 50、单元测试 11、设备测试 48）。
 
 ## 启动与页面
 
@@ -133,5 +133,6 @@ erDiagram
 | S8 账号清理与后台任务 | [S8NativeEvidenceCleanupTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S8NativeEvidenceCleanupTest.kt)、[S8ProfileCleanupTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S8ProfileCleanupTest.kt)、[S8BackgroundExecutionTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S8BackgroundExecutionTest.kt)、[s8_audit.py](../scripts/device/s8_audit.py) |
 | 账号移除与启动清理 | [SyncCoordinator.kt](../app/src/main/java/com/logisticsmanagement/app/sync/SyncCoordinator.kt)、[NativeSyncProgress.kt](../app/src/main/java/com/logisticsmanagement/app/platform/NativeSyncProgress.kt)、[LogisticsApplication.kt](../app/src/main/java/com/logisticsmanagement/app/LogisticsApplication.kt) |
 | S9 移除并发与重新绑定 | [S9EndWriteGuardTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S9EndWriteGuardTest.kt)、[S9CleanupConvergenceTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S9CleanupConvergenceTest.kt)、[S9RemovalAuditTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S9RemovalAuditTest.kt)、[s9_audit.py](../scripts/device/s9_audit.py) |
+| S10 会话恢复与重新绑定归属 | [S10RebindAttributionTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S10RebindAttributionTest.kt)、[S10SessionRestoreTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S10SessionRestoreTest.kt)、[S10ProfileDeferTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S10ProfileDeferTest.kt)、[stage_snapshot.sh](../scripts/device/stage_snapshot.sh)、[stage_state.py](../scripts/device/stage_state.py)、[stage_audit.py](../scripts/device/stage_audit.py) |
 
 修改源码后执行 `codegraph sync`，平台可用范围更新需要真实证据及验收记录。完整本机阶段资料通过任务状态和证据索引查找。

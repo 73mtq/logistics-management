@@ -273,7 +273,7 @@ internal class JdLoginFlow(
     private fun preferredNumbers(): List<String> {
         val owned = PhoneNumbers.ownNumbers(context)
         val fromLabel = Regex("1[3-9][0-9]{9}").find(account.label)?.value
-        return if (fromLabel != null && fromLabel in owned) listOf(fromLabel) + owned.filter { it != fromLabel } else owned
+        return if (fromLabel == null) owned else listOf(fromLabel) + owned.filter { it != fromLabel }
     }
 
     private suspend fun probe(): JdLoginProbe? {

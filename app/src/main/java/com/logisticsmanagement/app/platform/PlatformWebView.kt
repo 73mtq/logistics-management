@@ -108,9 +108,10 @@ internal class AccountProfiles(context: Context) {
                 }
             }
         } else {
-            if (ProfileStore.getInstance().getProfile(name) != null) ProfileStore.getInstance().deleteProfile(name)
-            pending.remove(name)
-            check(preferences.edit().putStringSet("pending_deletions", pending).commit())
+            if (ProfileStore.getInstance().getProfile(name) == null) {
+                pending.remove(name)
+                check(preferences.edit().putStringSet("pending_deletions", pending).commit())
+            }
         }
     }
 
