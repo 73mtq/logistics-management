@@ -119,6 +119,8 @@
 - 证据：work/evidence/platform-logistics-v2/S6/20261127-0930/（before、after-remove、after-start、scheduling、instrument、dryrun）；Pinky 记录 work/evidence/pinky/S6/20261127-0930/（observations.md、report/）；日志 work/logs/platform-logistics-v2/S6-*.log。
 - 验证：四项 Gradle 命令通过（最终 33 秒，83 项任务，3 项执行、80 项保持）；主机测试 42 项、12 跳过、0 失败；Lint 0 errors、75 warnings、2 hints；设备测试 S6SharedSourceCleanupTest 1 项、S6RemovalAuditTest 2 项通过；Pinky 任务与 instrument 串行执行。
 
+提交与 CI：commit b03234e 推送 main，Android CI 通过（run 45923754912，2 分 55 秒）。
+
 未完成范围：真实抖音账号移除（原生进度删除由真实文件副本覆盖）；按账号删除 `native-entry-evidence` 目录；WorkManager 实际执行结果；京东账号重新登录；更新进行中移除账号；新的平台第二次导入；历史非空备注与归档样本；已加载 profile 的延迟删除分支（本次为未加载分支，删除立即完成）。
 
 ## 已验证的阶段范围
