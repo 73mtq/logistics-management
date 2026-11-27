@@ -1,12 +1,12 @@
 # 快递助手
 
-个人 Android 快递助手，汇总京东、拼多多、淘宝／菜鸟和抖音的订单与物流。使用 Kotlin、Jetpack Compose、Material 3、Room、Android Keystore 和 WorkManager。包名 `com.logisticsmanagement.app`，版本 `1.1.0`、versionCode `2`，最低 API 26，编译及目标 API 36。
+个人 Android 快递助手，汇总京东、拼多多、淘宝／菜鸟和抖音的订单与物流。使用 Kotlin、Jetpack Compose、Material 3、Room、Android Keystore 和 WorkManager。包名 `com.logisticsmanagement.app`，版本 `1.2.0`、versionCode `3`，最低 API 26，编译及目标 API 36。
 
 ## 开发状态与安装包
 
-2026-11-26 完成 S2 已导入订单物流读取：商城订单列表卡片“更多”→弹窗“查看物流”，两轮分别 42.058 秒与 45.085 秒，3 笔订单与 15 条轨迹两轮稳定；列表结束标志、全部标签选中状态与未导入订单直接物流仍保持未完成。同日完成 S3 淘宝短信会话恢复与两轮读取（3 笔订单、2 个包裹、26 条轨迹），以及 S4 拼多多短信会话恢复与两轮读取（20 笔订单、24 条轨迹、查询队列 0；分页与标签计数通过，平台结束标志与原生页面对照未完成）。2026-11-25 完成 S1 抖音物流自动导入闭环；2026-11-27 完成 S6 数据保留、后台调度与账号移除（京东主账号移除、凭据 6→4、profile 3→2、业务表 27 订单/26 包裹/27 来源/90 轨迹保持、后台任务 0→3→2→0、共享来源清理与移除审计通过；真实抖音账号移除、按账号证据目录与 WorkManager 实际执行仍未完成）。T00 至 T15 的阶段记录、账号与 profile、原始证据及本机工具继续保留；后续按 S7 执行，不自动启动平台查询或抖音采集。
+2026-11-27 完成 S7 页面覆盖、版本与公开发布：在真实生产库上核对包裹列表（26 件已签收、搜索、状态筛选、平台与账号筛选、空结果）、京东包裹详情（复制运单号、25 条轨迹、备注保存与恢复、归档与恢复）、日历（当天物流更新 3 件、日期选择）与设置页（3 个账号卡片、自动更新开关），页面数值与数据库一致；版本升到 1.2.0、versionCode 3，发布 release 签名包并记录 APK SHA-256 与证书指纹。S1 至 S6 的读取与清理能力沿用：抖音物流列表直达与详情读取；淘宝、拼多多、京东短信会话恢复与两轮读取（京东订单页迁移到 o.m.jd.com 与 newUserAllOrderList）；账号移除、共享来源清理与后台调度核对。取件码复制、未关联抖音订单卡片与待发货订单卡片缺少真实样本，保持未覆盖。T00 至 T15 的阶段记录、账号与 profile、原始证据及本机工具继续保留；本轮页面覆盖使用 Pinky，构建、安装、instrument 与副本使用 adb，两类操作串行执行，不自动启动平台查询或抖音采集。
 
-[下载 1.1.0 开发预发布](https://github.com/73mtq/logistics-management/releases/tag/v1.1.0-dev.20261017)：提供主 APK、SHA-256 和签名说明。使用既有调试签名，适合当前开发验证；测试 APK 及私人证据保存在本机。下载后核查 SHA-256，通过 `adb install -r app-debug.apk` 覆盖安装；沿用现有账号资料需要保留应用数据。
+[下载 1.2.0 开发预发布](https://github.com/73mtq/logistics-management/releases/tag/v1.2.0-dev.20261127)：提供 release 签名主 APK、SHA-256 和签名说明。测试 APK 及私人证据保存在本机。下载后核查 SHA-256，新安装使用 `adb install app-release.apk`；1.1.0 调试包与本发布签名不同，覆盖安装会被拒绝，需要卸载旧包后安装，卸载会清除本地账号、profile 与业务资料。
 
 已完成工作及继续开发顺序见[开发计划与恢复入口](docs/development-plan.md)，实际通过、失败、跳过和缺少样本范围见[验收记录](docs/acceptance.md)。
 
@@ -34,7 +34,7 @@
 
 使用需要 Android 8.0（API 26）及以上设备。网页平台依赖系统 WebView 的多 profile、Cookie 读取、文档脚本、Web 消息和浏览数据删除能力；缺少任一能力时对应平台无法登录或同步。抖音采集需要开启无障碍服务并在应用内手动启动。Jev 辅助判断需要自行配置 API key，可以关闭。
 
-已知限制：京东待发货与待收货样本、302 与安全验证现场样本、原生订单计数对照、淘宝部分服务详情与网页滚动分页、抖音完整列表结束与候选字段、完整物流历史、真实抖音账号移除、按账号证据目录与 WorkManager 实际执行仍在后续范围。抖音订单列表卡片不含订单号，未导入订单仍需进入详情读取订单号。网页会话可能过期，失败与验证状态显示在账号卡片。淘宝、拼多多与京东短信登录依赖通知使用权，HyperOS 的自启动管理可能在应用重启后拒绝重新绑定通知监听，需要在系统设置中允许该应用自启动。拼多多 H5 登录会被平台视为其他设备登录，原生 App 会退出；该平台当前没有免密入口，登录需要绑定号码接收短信。当前安装包使用调试签名，release 签名与发布流程在 S7。设备 Compose 页面测试使用 espresso-core 3.8.0-alpha04，因为 Android 17 移除了旧版反射调用的 InputManager.getInstance；稳定版发布后应替换。
+已知限制：京东待发货与待收货样本、302 与安全验证现场样本、原生订单计数对照、淘宝部分服务详情与网页滚动分页、抖音完整列表结束与候选字段、完整物流历史、真实抖音账号移除、按账号证据目录与 WorkManager 实际执行仍在后续范围。抖音订单列表卡片不含订单号，未导入订单仍需进入详情读取订单号。网页会话可能过期，失败与验证状态显示在账号卡片。淘宝、拼多多与京东短信登录依赖通知使用权，HyperOS 的自启动管理可能在应用重启后拒绝重新绑定通知监听，需要在系统设置中允许该应用自启动。拼多多 H5 登录会被平台视为其他设备登录，原生 App 会退出；该平台当前没有免密入口，登录需要绑定号码接收短信。发布包使用本机 release keystore 签名（证书 SHA-256 c53606e0…）；本机设备保留调试签名安装包以保留账号、profile 与本机证据，从调试包切换到发布包需要卸载并清除本地资料。取件码复制、未关联抖音订单卡片与待发货订单卡片缺少真实样本，页面验证保持未完成。设备 Compose 页面测试使用 espresso-core 3.8.0-alpha04，因为 Android 17 移除了旧版反射调用的 InputManager.getInstance；稳定版发布后应替换。
 
 ## 账号与同步
 
@@ -64,7 +64,7 @@ $env:ANDROID_HOME = 'D:\Android\Sdk'
 .\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :app:lintDebug
 ```
 
-产物为 `app/build/outputs/apk/debug/app-debug.apk` 和 `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`。当前开发包使用调试签名。发布包使用本机 keystore：设置 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD` 后执行 `:app:assembleRelease`。切换签名时可以先加 `-PdebuggableRelease=true` 构建临时可调试发布包，安装后通过 `run-as` 恢复整包备份，再安装正式包；该流程会先卸载旧包，必须在确认备份可用后执行。keystore 与密码保存在本机 `work/release/`，不进入仓库；发布签名与调试签名不同，覆盖安装到已有调试包会因签名不一致被拒绝，切换签名前需要备份资料并卸载旧包。推送与拉取请求由 [GitHub Actions](.github/workflows/android.yml) 执行构建、主机测试和 Lint 并上传报告；工作流不运行设备测试，不接触真实账号或私人资料。
+产物为 `app/build/outputs/apk/debug/app-debug.apk` 和 `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`。当前开发包使用调试签名；1.2.0 发布包使用本机 keystore 签名，产物为 `app/build/outputs/apk/release/app-release.apk`，可用 `apksigner verify --print-certs` 核对证书 SHA-256 c53606e0…。发布包构建：设置 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD` 后执行 `:app:assembleRelease`。切换签名时可以先加 `-PdebuggableRelease=true` 构建临时可调试发布包，安装后通过 `run-as` 恢复整包备份，再安装正式包；该流程会先卸载旧包，必须在确认备份可用后执行。keystore 与密码保存在本机 `work/release/`，不进入仓库；发布签名与调试签名不同，覆盖安装到已有调试包会因签名不一致被拒绝，切换签名前需要备份资料并卸载旧包。推送与拉取请求由 [GitHub Actions](.github/workflows/android.yml) 执行构建、主机测试和 Lint 并上传报告；工作流不运行设备测试，不接触真实账号或私人资料。
 
 ```powershell
 adb devices

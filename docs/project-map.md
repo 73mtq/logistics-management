@@ -2,7 +2,7 @@
 
 产品与构建入口见[README](../README.md)，数据规则见[架构说明](architecture.md)，当前真实范围见[验收记录](acceptance.md)。本机有 `.codegraph/` 时，理解或定位代码优先使用[CodeGraph](codegraph.md)。
 
-2026-11-27 完成 S6 数据保留、后台调度与账号移除；后续按[开发计划与恢复入口](development-plan.md)的 S7 执行。当前版本 1.1.0、versionCode 2、Room schema v2；Kotlin 源码 97 份（main 50、单元测试 11、设备测试 36）。
+2026-11-27 完成 S7 页面覆盖、版本与公开发布；当前版本 1.2.0、versionCode 3、Room schema v2；Kotlin 源码 97 份（main 50、单元测试 11、设备测试 36）。
 
 ## 启动与页面
 
