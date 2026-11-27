@@ -11,6 +11,7 @@ import com.logisticsmanagement.app.platform.PlatformAdapter
 import com.logisticsmanagement.app.platform.BrowserAdapter
 import com.logisticsmanagement.app.platform.PddAdapter
 import com.logisticsmanagement.app.platform.TaobaoAdapter
+import com.logisticsmanagement.app.platform.NativeEvidenceStore
 import com.logisticsmanagement.app.platform.NativeOrderImportSession
 import com.logisticsmanagement.app.platform.NativeScan
 import com.logisticsmanagement.app.platform.NativeSyncProgressStore
@@ -336,6 +337,7 @@ class SyncCoordinator(
         WorkManager.getInstance(context).cancelUniqueWork("account_$id")
         locks.computeIfAbsent(id) { Mutex() }.withLock {
             repository.clearAccountQueue(id)
+            withContext(Dispatchers.IO) { NativeEvidenceStore.deleteAccount(context.filesDir, id, credentials) }
             platforms.deleteAccountProfile(account)
             credentials.deleteAccount(id)
             nativeProgressStore.delete(id)

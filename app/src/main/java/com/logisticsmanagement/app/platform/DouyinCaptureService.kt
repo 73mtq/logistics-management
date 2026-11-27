@@ -345,6 +345,9 @@ class DouyinCaptureService : AccessibilityService() {
     internal fun prepareEvidence(account: Account, captureId: String) {
         checkMainThread()
         directory = File(filesDir, "native-entry-evidence/$captureId").apply { check(mkdirs()) }
+        val evidenceDirectory = checkNotNull(directory)
+        val credentialStore = (application as LogisticsApplication).container.credentials
+        File(evidenceDirectory, "account.enc").writeText(credentialStore.encrypt(account.id))
         evidenceAccount = account
         startedAt = System.currentTimeMillis()
         sequence = 0

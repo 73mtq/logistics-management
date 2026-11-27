@@ -7,8 +7,12 @@ import com.logisticsmanagement.app.model.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.io.IOException
+import java.nio.BufferUnderflowException
 import java.security.GeneralSecurityException
 import java.util.UUID
 
@@ -65,6 +69,34 @@ internal object NativeEvidenceStore {
         dirs.sortedByDescending { it.lastModified() }.forEachIndexed { index, dir ->
             if (index >= keep || now - dir.lastModified() > maxAgeMillis) dir.deleteRecursively()
         }
+    }
+
+    fun deleteAccount(filesDir: File, accountId: String, credentials: CredentialStore): Int {
+        val dirs = File(filesDir, "native-entry-evidence").listFiles()?.filter { it.isDirectory } ?: return 0
+        var deleted = 0
+        for (dir in dirs) {
+            if (evidenceOwner(dir, credentials) != accountId) continue
+            check(dir.deleteRecursively()) { "无法删除账号采集证据：${dir.name}" }
+            deleted++
+        }
+        return deleted
+    }
+
+    private fun evidenceOwner(dir: File, credentials: CredentialStore): String? {
+        for (name in listOf("account.enc", "end.enc", "order-import.enc")) {
+            val file = File(dir, name)
+            if (!file.isFile) continue
+            val plain = try { credentials.decrypt(file.readText()) } catch (failure: IOException) { continue }
+                catch (failure: GeneralSecurityException) { continue }
+                catch (failure: IllegalArgumentException) { continue }
+                catch (failure: BufferUnderflowException) { continue }
+            val owner = if (name == "account.enc") plain else {
+                val parsed = try { platformJson.parseToJsonElement(plain) } catch (failure: IllegalArgumentException) { null }
+                ((parsed as? JsonObject)?.get("accountId") as? JsonPrimitive)?.contentOrNull
+            }
+            if (!owner.isNullOrBlank()) return owner
+        }
+        return null
     }
 }
 

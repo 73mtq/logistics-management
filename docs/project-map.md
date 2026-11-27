@@ -2,7 +2,7 @@
 
 产品与构建入口见[README](../README.md)，数据规则见[架构说明](architecture.md)，当前真实范围见[验收记录](acceptance.md)。本机有 `.codegraph/` 时，理解或定位代码优先使用[CodeGraph](codegraph.md)。
 
-2026-11-27 完成 S7 页面覆盖、版本与公开发布；当前版本 1.2.0、versionCode 3、Room schema v2；Kotlin 源码 97 份（main 50、单元测试 11、设备测试 36）。
+2026-11-27 完成 S8 账号清理与后台任务执行；当前版本 1.2.0、versionCode 3、Room schema v2；Kotlin 源码 101 份（main 50、单元测试 11、设备测试 40）。
 
 ## 启动与页面
 
@@ -88,7 +88,7 @@ erDiagram
     SourceRef ||--o| TrackingQueue : sourceId
 ```
 
-业务关联由 Repository 维护；待发货及抖音未关联订单可以没有包裹，多个来源可以关联同一包裹。别名维护合并前编号。账号移除保留业务记录，明确类型排除通过 Repository 清理来源和独立包裹。
+业务关联由 Repository 维护；待发货及抖音未关联订单可以没有包裹，多个来源可以关联同一包裹。别名维护合并前编号。账号移除保留业务记录，清理可归属的原生证据目录；明确类型排除通过 Repository 清理来源和独立包裹。
 
 ## 源码入口
 
@@ -110,5 +110,6 @@ erDiagram
 | 加密及配置 | [CredentialStore.kt](../app/src/main/java/com/logisticsmanagement/app/data/CredentialStore.kt)、[SettingsStore.kt](../app/src/main/java/com/logisticsmanagement/app/data/SettingsStore.kt) |
 | 真实验证源码 | [androidTest](../app/src/androidTest/java/com/logisticsmanagement/app)、[单元测试](../app/src/test/java/com/logisticsmanagement/app) |
 | 数据保留与移除验收 | [S6RemovalAuditTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S6RemovalAuditTest.kt)、[S6SharedSourceCleanupTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S6SharedSourceCleanupTest.kt)、[s6_audit.py](../scripts/device/s6_audit.py) |
+| S8 账号清理与后台任务 | [S8NativeEvidenceCleanupTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S8NativeEvidenceCleanupTest.kt)、[S8ProfileCleanupTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S8ProfileCleanupTest.kt)、[S8BackgroundExecutionTest.kt](../app/src/androidTest/java/com/logisticsmanagement/app/S8BackgroundExecutionTest.kt)、[s8_audit.py](../scripts/device/s8_audit.py) |
 
 修改源码后执行 `codegraph sync`，平台可用范围更新需要真实证据及验收记录。完整本机阶段资料通过任务状态和证据索引查找。

@@ -31,7 +31,8 @@ def capture(args):
     state = Path(args.state)
     (state / "db").mkdir(parents=True, exist_ok=True)
     (state / "prefs").mkdir(parents=True, exist_ok=True)
-    adb_text(args.adb, args.serial, "shell", "am", "force-stop", PKG)
+    if getattr(args, "force_stop", True):
+        adb_text(args.adb, args.serial, "shell", "am", "force-stop", PKG)
     for name in ["logistics.db", "logistics.db-wal", "logistics.db-shm"]:
         code, data = adb_bytes(args.adb, args.serial, "exec-out", "run-as", PKG, "cat", f"databases/{name}")
         if code != 0:
@@ -219,12 +220,8 @@ def compare(args):
     expected_after_profiles = before_profiles - 1
     if after_profiles not in (before_profiles, expected_after_profiles):
         fail(f"profile 目录数量异常：before {before_profiles}，after {after_profiles}")
-    if args.removed_profile in after["profiles"]:
-        if after_profiles != before_profiles:
-            fail("profile 仍存在但目录数量已经减少")
-    else:
-        if after_profiles != expected_after_profiles:
-            fail("profile 已消失但目录数量没有减少")
+    if after_profiles == before_profiles and args.removed_profile not in after["prefs"]["webview"]["pending"]:
+        fail("profile 目录仍存在，但待删除列表缺少目标 profile")
     if after_start is not None and len(after_start["profiles"]) != expected_after_profiles:
         fail(f"启动后 profile 目录数量不是 {expected_after_profiles}")
 
