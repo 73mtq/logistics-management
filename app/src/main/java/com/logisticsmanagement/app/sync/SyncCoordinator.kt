@@ -3,6 +3,7 @@ package com.logisticsmanagement.app.sync
 import android.app.NotificationManager
 import android.content.Context
 import android.os.SystemClock
+import android.util.Log
 import androidx.work.*
 import com.logisticsmanagement.app.data.*
 import com.logisticsmanagement.app.model.*
@@ -151,6 +152,7 @@ class SyncCoordinator(
             val resumedIds = repository.pendingTracking(id).map { it.sourceId }.toSet()
             val job = coroutineContext.job
             activeJobs[id] = job
+            Log.i("SyncStart", "account=$id automatic=$automatic")
             var totals = IngestResult()
             val tracking = TrackingRun()
             val notes = mutableListOf<String>()
@@ -195,6 +197,7 @@ class SyncCoordinator(
             } catch (error: CancellationException) {
                 withContext(NonCancellable) {
                     val pending = repository.pendingTracking(id).size
+                    Log.i("SyncCancel", "account=$id stage=${mutableProgress.value[id]?.stage} orders=${totals.inserted + totals.updated} tracking=${tracking.updated} pending=$pending")
                     val message = "更新已中断；${totals.description}；物流成功 ${tracking.updated} 个，失败 ${tracking.failures.size} 个，待查询 $pending 个"
                     repository.setSyncState(id, AccountState.PARTIAL, message)
                     report(SyncProgress(id, SyncStage.CANCELLED, totals.inserted + totals.updated, tracking.updated, tracking.total,
@@ -334,9 +337,11 @@ class SyncCoordinator(
 
     suspend fun removeAccount(id: String) {
         val account = repository.getAccount(id) ?: throw AppFailure("账号不存在", FailureKind.CONFIGURATION)
+        Log.i("AccountRemoval", "start account=$id active=${activeJobs.containsKey(id)}")
         repository.saveAccount(account.copy(enabled = false, deleted = true, state = AccountState.REMOVED))
         activeJobs[id]?.cancel()
         WorkManager.getInstance(context).cancelUniqueWork("account_$id")
+        Log.i("AccountRemoval", "cancelSent account=$id")
         withContext(Dispatchers.Main.immediate) {
             DouyinCaptureController.stopForRemoval(id)
             DouyinCaptureController.awaitIdle()
@@ -348,6 +353,7 @@ class SyncCoordinator(
             credentials.deleteAccount(id)
             nativeProgressStore.delete(id)
         }
+        Log.i("AccountRemoval", "done account=$id")
     }
 
     internal suspend fun cleanupRemovedAccounts(filesRoot: File = context.filesDir) {

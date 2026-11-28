@@ -139,6 +139,7 @@ class PlatformBrowserActivity : ComponentActivity() {
             when (val result = flow.run(LOGIN_TIMEOUT_MILLIS)) {
                 TaobaoLoginResult.Succeeded -> {
                     registry.saveAccountSecret(selected, LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
+                    flushProfile(selected)
                     updateState(AccountState.READY, null)
                     val stored = checkNotNull(registry.repository.getAccount(selected.id))
                     registry.repository.saveAccount(stored.copy(lastAttemptAt = null))
@@ -203,6 +204,7 @@ class PlatformBrowserActivity : ComponentActivity() {
             when (val result = flow.run(JD_LOGIN_TIMEOUT_MILLIS)) {
                 JdLoginResult.Succeeded -> {
                     registry.saveAccountSecret(selected, JD_LOGIN_EVIDENCE, platformJson.encodeToString(flow.evidence()))
+                    flushProfile(selected)
                     updateState(AccountState.READY, null)
                     val stored = checkNotNull(registry.repository.getAccount(selected.id))
                     registry.repository.saveAccount(stored.copy(lastAttemptAt = null))
@@ -293,6 +295,7 @@ class PlatformBrowserActivity : ComponentActivity() {
         while (!loginFinished && !isFinishing) {
             delay(2_000)
             if (!hasLoginSession(selected)) continue
+            flushProfile(selected)
             updateState(AccountState.READY, null)
             loginFinished = true
             status.text = "登录会话已经保存"
@@ -301,6 +304,10 @@ class PlatformBrowserActivity : ComponentActivity() {
             setResult(RESULT_OK)
             finish()
         }
+    }
+
+    private fun flushProfile(account: Account) {
+        registry.profiles.profile(account).cookieManager.flush()
     }
 
     private fun hasLoginSession(account: Account): Boolean {
@@ -316,6 +323,7 @@ class PlatformBrowserActivity : ComponentActivity() {
                 updateState(AccountState.NEEDS_VERIFICATION, "请在官方商城订单页面采集真实响应")
                 status.text = "会话已经保存，请进入官方商城订单页面以采集响应"
             } else if (hasLoginSession(current)) {
+                flushProfile(current)
                 updateState(AccountState.READY, null)
                 val stored = checkNotNull(registry.repository.getAccount(current.id))
                 registry.repository.saveAccount(stored.copy(lastAttemptAt = null))
